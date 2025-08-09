@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>coworker</title>
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="header">
+        <div class="project-selector">
+            <h1>coworker</h1>
+            <select id="projectSelect" onchange="switchProject()">
+                <option value="">Select a project...</option>
+            </select>
+            <button onclick="showProjectOverview()">
+                All Projects
+            </button>
+            <button onclick="openProjectModal()">
+                New Project
+            </button>
+            <button onclick="toggleArchivedProjects()" id="archiveToggle" style="display: none;">
+                Show Archived
+            </button>
+            <button id="projectSettingsBtn" onclick="openProjectSettings()" style="display: none;">
+                Settings
+            </button>
+        </div>
+    </div>
+
+    <!-- Breadcrumb Trail -->
+    <div class="breadcrumb-container" id="breadcrumbContainer" style="display: none;">
+        <div class="breadcrumb-trail" id="breadcrumbTrail"></div>
+    </div>
+
+    <!-- Project Overview -->
+    <div class="project-overview" id="projectOverview">
+        <div class="overview-layout">
+            <div>
+                <div class="project-grid" id="projectGrid"></div>
+            </div>
+            <div class="global-tasks-panel">
+                <div class="global-tasks-header">
+                    <h3>Global Tasks</h3>
+                </div>
+                
+                <div class="top-three-section">
+                    <div class="top-three-header">
+                        Top 3 Priority Tasks
+                    </div>
+                    <div id="topThreeTasks" class="task-drop-zone" 
+                         ondrop="handleTaskDrop(event, 'top-three')" 
+                         ondragover="handleTaskDragOver(event)"
+                         ondragleave="handleTaskDragLeave(event)">
+                        Drop your most important tasks here
+                    </div>
+                </div>
+                
+                <div class="other-tasks-section">
+                    <div class="other-tasks-header">All Other Tasks</div>
+                    <div id="otherTasks" class="task-drop-zone"
+                         ondrop="handleTaskDrop(event, 'other')" 
+                         ondragover="handleTaskDragOver(event)"
+                         ondragleave="handleTaskDragLeave(event)">
+                        All other tasks appear here
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="dashboard" id="dashboard" style="display: none;">
+        <!-- Briefs Panel -->
+        <div class="panel" style="grid-area: briefs;">
+            <div class="panel-header">
+                <span class="icon">B</span>
+                <h2>Briefs</h2>
+            </div>
+            
+            <div class="input-group">
+                <input type="text" id="briefTitle" placeholder="Brief title..." onkeypress="handleEnterKey(event, 'brief')">
+                <button onclick="addQuickBrief()">
+                    Add
+                </button>
+            </div>
+
+            <div class="scrollable drop-zone" id="briefsList" 
+                 ondrop="handleDrop(event, 'brief')" 
+                 ondragover="handleDragOver(event)"
+                 ondragleave="handleDragLeave(event)"
+                 data-drop-message="Drop here to create brief">
+            </div>
+        </div>
+
+        <!-- Tasks Panel -->
+        <div class="panel" style="grid-area: tasks;">
+            <div class="panel-header">
+                <span class="icon">T</span>
+                <h2>Tasks</h2>
+            </div>
+
+            <div class="input-group">
+                <input type="text" id="taskTitle" placeholder="Task title..." onkeypress="handleEnterKey(event, 'task')">
+                <button onclick="addQuickTask()">
+                    Add
+                </button>
+            </div>
+
+            <div id="projectTaskContainer" class="scrollable drop-zone" 
+                 ondrop="handleDrop(event, 'task')" 
+                 ondragover="handleDragOver(event)"
+                 ondragleave="handleDragLeave(event)"
+                 data-drop-message="Drop any item here to create task">
+            </div>
+        </div>
+
+        <!-- Notes Panel -->
+        <div class="panel panel-notes" style="grid-area: notes;">
+            <div class="panel-header">
+                <span class="icon">N</span>
+                <h2>Notes</h2>
+            </div>
+            
+            <div class="input-group">
+                <input type="text" id="noteTitle" placeholder="Note title..." onkeypress="handleEnterKey(event, 'note')">
+                <button onclick="addQuickNote()">
+                    Add
+                </button>
+            </div>
+
+            <div class="scrollable drop-zone" id="notesList" 
+                 ondrop="handleDrop(event, 'note')" 
+                 ondragover="handleDragOver(event)"
+                 ondragleave="handleDragLeave(event)"
+                 data-drop-message="Drop brief here to create linked note">
+            </div>
+        </div>
+
+        <!-- Copy Panel -->
+        <div class="panel panel-copy" style="grid-area: copy;">
+            <div class="panel-header">
+                <span class="icon">C</span>
+                <h2>Copy</h2>
+            </div>
+            
+            <div class="input-group">
+                <input type="text" id="copyTitle" placeholder="Copy title..." onkeypress="handleEnterKey(event, 'copy')">
+                <button onclick="addQuickCopy()">
+                    Add
+                </button>
+            </div>
+
+            <div class="scrollable drop-zone" id="copyList" 
+                 ondrop="handleDrop(event, 'copy')" 
+                 ondragover="handleDragOver(event)"
+                 ondragleave="handleDragLeave(event)"
+                 data-drop-message="Drop brief here to create linked copy">
+            </div>
+        </div>
+    </div>
+
+    <!-- Project Modal -->
+    <div id="projectModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create New Project</h3>
+                <button class="close-btn" onclick="closeModal('projectModal')">×</button>
+            </div>
+            <div class="input-group">
+                <input type="text" id="newProjectName" placeholder="Project name...">
+            </div>
+            <textarea id="newProjectDescription" placeholder="Project description..."></textarea>
+            <button onclick="createProject()">Create Project</button>
+        </div>
+    </div>
+
+    <!-- Item Editor Modal -->
+    <div id="itemEditor" class="editor-modal">
+        <div class="editor-content">
+            <div class="editor-header">
+                <div style="display: flex; align-items: center; gap: 16px; flex: 1; min-width: 0;">
+                    <h3 id="editorTitle" style="margin: 0; white-space: nowrap;">Edit Item</h3>
+                </div>
+                <div style="display: flex; align-items: center; gap: 16px;">
+                    <!-- Pomodoro Timer (only for notes and copy) -->
+                    <div id="pomodoroTimer" class="pomodoro-timer" style="display: none;">
+                        <div class="pomodoro-display" id="pomodoroDisplay">25:00</div>
+                        <div class="pomodoro-status" id="pomodoroStatus">Ready to focus</div>
+                        <div class="pomodoro-controls">
+                            <button class="pomodoro-btn" id="pomodoroStart" onclick="startPomodoro()">Start</button>
+                            <button class="pomodoro-btn" id="pomodoroPause" onclick="pausePomodoro()" style="display: none;">Pause</button>
+                            <button class="pomodoro-btn" onclick="resetPomodoro()">Reset</button>
+                            <button class="pomodoro-btn" onclick="skipPomodoro()">Skip</button>
+                        </div>
+                        <div class="pomodoro-stats">
+                            <span>Session: <span id="sessionCount">0</span></span>
+                            <span>Today: <span id="dailyCount">0</span></span>
+                        </div>
+                    </div>
+                    <button class="close-btn" onclick="closeEditor()">×</button>
+                </div>
+            </div>
+            
+            <div class="input-group">
+                <input type="text" id="editorItemTitle" placeholder="Title...">
+            </div>
+            
+            <!-- Brief-specific fields -->
+            <div id="briefFields" style="display: none;">
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #171717;">Custom Proposition</label>
+                    <textarea id="editorProposition" class="editor-textarea" style="min-height: 150px;" placeholder="Write your custom proposition here..."></textarea>
+                </div>
+                
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #171717;">Full Client Brief</label>
+                    <textarea id="editorClientBrief" class="editor-textarea" style="min-height: 200px;" placeholder="Paste or write the full client brief here..."></textarea>
+                </div>
+            </div>
+            
+            <!-- Standard content field for other types -->
+            <div id="standardFields">
+                <div class="editor-toolbar">
+                    <button onclick="formatRichText('bold')" title="Bold">B</button>
+                    <button onclick="formatRichText('italic')" title="Italic">I</button>
+                    <button onclick="formatRichText('formatBlock', 'h1')" title="Heading">H1</button>
+                    <button onclick="formatRichText('formatBlock', 'h2')" title="Subheading">H2</button>
+                    <button onclick="formatRichText('insertUnorderedList')" title="Bullet List">List</button>
+                    <button onclick="formatRichText('insertOrderedList')" title="Numbered List">Numbers</button>
+                    <button onclick="createLink()" title="Link">Link</button>
+                    <button onclick="formatRichText('formatBlock', 'blockquote')" title="Quote">Quote</button>
+                    <button onclick="formatRichText('removeFormat')" title="Clear Formatting">Clear</button>
+                    <!-- Copy to clipboard button for notes and copy -->
+                    <button id="copyToClipboardBtn" onclick="copyContentToClipboard()" title="Copy to Clipboard" style="display: none; background: #0891b2; color: white;">
+                        Copy
+                    </button>
+                    <!-- Insert Headings button for notes -->
+                    <button id="insertHeadingsBtn" onclick="insertStandardHeadings()" title="Insert Standard Prompts" style="display: none; background: #16a34a; color: white;">
+                        Prompts
+                    </button>
+                </div>
+                
+                <div id="richEditor" class="rich-editor" contenteditable="true" placeholder="Start writing... (Use the toolbar above for formatting)"></div>
+                <textarea id="editorContent" class="editor-textarea" placeholder="Content..." style="display: none;"></textarea>
+            </div>
+            
+            <div style="display: flex; gap: 12px; margin-top: 20px; align-items: center;">
+                <div id="autosaveStatus" style="flex: 1; font-size: 12px; color: #737373;">
+                    <span id="autosaveText">Ready</span>
+                </div>
+                <button onclick="closeEditor()" class="btn-secondary">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Project Settings Modal -->
+    <div id="projectSettingsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Project Settings</h3>
+                <button class="close-btn" onclick="closeModal('projectSettingsModal')">×</button>
+            </div>
+            <div class="input-group">
+                <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #171717;">Project Name</label>
+                <input type="text" id="settingsProjectName" placeholder="Project name...">
+            </div>
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #171717;">Color Theme</label>
+                <select id="settingsColorTheme">
+                    <option value="blue">Blue</option>
+                    <option value="green">Green</option>
+                    <option value="purple">Purple</option>
+                    <option value="pink">Pink</option>
+                    <option value="orange">Orange</option>
+                    <option value="teal">Teal</option>
+                    <option value="indigo">Indigo</option>
+                    <option value="red">Red</option>
+                </select>
+            </div>
+            <button onclick="saveProjectSettings()">Save Settings</button>
+        </div>
+    </div>
+
+    <!-- Custom Confirmation Modal -->
+    <div id="confirmModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="confirmTitle">Confirm Action</h3>
+            </div>
+            <div id="confirmMessage" style="margin: 20px 0; font-size: 16px;">
+                Are you sure you want to proceed?
+            </div>
+            <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                <button onclick="cancelConfirm()" class="btn-secondary">
+                    Cancel
+                </button>
+                <button onclick="proceedConfirm()" style="background: #dc2626;">
+                    Delete
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
