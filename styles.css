@@ -6,9 +6,9 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    background: linear-gradient(135deg, #fffef7 0%, #faf9f2 100%);
+    background: #fffef7;
     min-height: 100vh;
-    color: #2d3748;
+    color: #333;
 }
 
 /* Keep serif font for headings and specific elements */
@@ -24,14 +24,13 @@ h1, h2, h3, h4, h5, h6,
 }
 
 .header {
-    background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
-    border-bottom: 1px solid #e2e8f0;
+    background: #fffff8;
+    border-bottom: 1px solid #e5e5e5;
     padding: 16px 20px;
     margin-bottom: 20px;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
 .project-selector {
@@ -43,11 +42,7 @@ h1, h2, h3, h4, h5, h6,
 .project-selector h1 {
     font-size: 20px;
     font-weight: 600;
-    color: #2d3748;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    color: #171717;
 }
 
 .project-selector select {
@@ -190,20 +185,18 @@ h1, h2, h3, h4, h5, h6,
 }
 
 .project-card {
-    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-    border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    padding: 24px;
-    transition: all 0.3s ease;
+    background: #fffff8;
+    border: 1px solid #e5e5e5;
+    border-radius: 4px;
+    padding: 20px;
+    transition: all 0.2s ease;
     cursor: pointer;
     position: relative;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .project-card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 12px 20px rgba(0, 0, 0, 0.15), 0 8px 10px rgba(0, 0, 0, 0.1);
-    border-color: #cbd5e0;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .project-title {
@@ -227,18 +220,18 @@ h1, h2, h3, h4, h5, h6,
 }
 
 .panel {
-    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
+    background: #fffff8;
+    border: 1px solid #e5e5e5;
+    border-radius: 4px;
     padding: 20px;
-    transition: all 0.3s ease;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
     min-height: 400px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 .panel:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 15px rgba(0, 0, 0, 0.12), 0 4px 6px rgba(0, 0, 0, 0.08);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
 .panel-header {
@@ -275,19 +268,17 @@ h1, h2, h3, h4, h5, h6,
 
 input, textarea, select {
     flex: 1;
-    padding: 10px 20px 10px 14px;
-    border: 2px solid #e2e8f0;
-    border-radius: 6px;
+    padding: 8px 20px 8px 12px;
+    border: 1px solid #d4d4d4;
+    border-radius: 4px;
     font-size: 14px;
-    transition: all 0.3s ease;
-    background: #ffffff;
+    transition: border-color 0.2s ease;
+    background: #fffff8;
 }
 
 input:focus, textarea:focus, select:focus {
     outline: none;
-    border-color: #667eea;
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-    transform: translateY(-1px);
+    border-color: #171717;
 }
 
 textarea {
@@ -298,39 +289,34 @@ textarea {
 
 button {
     padding: 8px 16px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #171717;
     color: white;
     border: none;
-    border-radius: 6px;
+    border-radius: 4px;
     cursor: pointer;
     font-weight: 500;
     font-size: 14px;
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
     display: flex;
     align-items: center;
     gap: 8px;
-    box-shadow: 0 2px 4px rgba(102, 126, 234, 0.25);
 }
 
 button:hover {
-    background: linear-gradient(135deg, #5a67d8 0%, #6b46c1 100%);
+    background: #0a0a0a;
     transform: translateY(-1px);
-    box-shadow: 0 4px 8px rgba(102, 126, 234, 0.35);
 }
 
 button:active {
     transform: translateY(0);
-    box-shadow: 0 2px 4px rgba(102, 126, 234, 0.25);
 }
 
 .btn-secondary {
-    background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
-    box-shadow: 0 2px 4px rgba(107, 114, 128, 0.25);
+    background: #737373;
 }
 
 .btn-secondary:hover {
-    background: linear-gradient(135deg, #4b5563 0%, #374151 100%);
-    box-shadow: 0 4px 8px rgba(107, 114, 128, 0.35);
+    background: #525252;
 }
 
 .item {
@@ -506,15 +492,13 @@ button:active {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-    border-radius: 12px;
-    padding: 28px;
+    background: #fffff8;
+    border-radius: 4px;
+    padding: 24px;
     width: 90%;
     max-width: 500px;
     max-height: 80vh;
     overflow-y: auto;
-    box-shadow: 0 20px 25px rgba(0, 0, 0, 0.15), 0 8px 10px rgba(0, 0, 0, 0.1);
-    border: 1px solid #e2e8f0;
 }
 
 .modal-header {
@@ -561,15 +545,13 @@ button:active {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-    border-radius: 12px;
-    padding: 28px;
+    background: #fffff8;
+    border-radius: 4px;
+    padding: 24px;
     width: 90%;
     max-width: 800px;
     max-height: 90vh;
     overflow-y: auto;
-    box-shadow: 0 20px 25px rgba(0, 0, 0, 0.15), 0 8px 10px rgba(0, 0, 0, 0.1);
-    border: 1px solid #e2e8f0;
 }
 
 .editor-header {
@@ -694,20 +676,18 @@ button:active {
 }
 
 .delete-btn {
-    background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
+    background: #dc2626;
     padding: 4px 8px;
     font-size: 11px;
     margin-left: 8px;
     min-width: auto;
-    border-radius: 4px;
-    transition: all 0.3s ease;
-    box-shadow: 0 2px 4px rgba(239, 68, 68, 0.25);
+    border-radius: 2px;
+    transition: all 0.2s ease;
 }
 
 .delete-btn:hover {
-    background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+    background: #b91c1c;
     transform: translateY(-1px);
-    box-shadow: 0 4px 8px rgba(239, 68, 68, 0.35);
 }
 
 .item-actions {
@@ -791,33 +771,29 @@ button:active {
 }
 
 .archive-btn {
-    background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
-    padding: 6px 12px;
+    background: #737373;
+    padding: 4px 8px;
     font-size: 11px;
     margin-left: 8px;
-    border-radius: 4px;
-    box-shadow: 0 2px 4px rgba(107, 114, 128, 0.25);
 }
 
 .archive-btn:hover {
-    background: linear-gradient(135deg, #4b5563 0%, #374151 100%);
-    box-shadow: 0 4px 8px rgba(107, 114, 128, 0.35);
+    background: #525252;
 }
 
 /* Pomodoro Timer Styles */
 .pomodoro-timer {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-    border-radius: 8px;
-    padding: 10px 14px;
+    background: #16a34a;
+    border-radius: 4px;
+    padding: 8px 12px;
     color: white;
     display: flex;
     align-items: center;
     gap: 12px;
     flex-wrap: nowrap;
     font-size: 12px;
-    border: 1px solid #047857;
+    border: 1px solid #15803d;
     transition: all 0.3s ease;
-    box-shadow: 0 2px 4px rgba(16, 185, 129, 0.25);
 }
 
 /* Override when in colored header modes */
@@ -1004,16 +980,15 @@ button:active {
     position: fixed;
     top: 20px;
     right: 20px;
-    background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+    background: #171717;
     color: white;
-    padding: 14px 18px;
-    border-radius: 8px;
+    padding: 12px 16px;
+    border-radius: 4px;
     font-size: 14px;
     z-index: 10000;
-    box-shadow: 0 8px 25px rgba(0,0,0,0.3), 0 4px 10px rgba(0,0,0,0.2);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
     transform: translateX(400px);
-    transition: all 0.4s ease;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: transform 0.3s ease;
 }
 
 .notification.show {
@@ -1054,75 +1029,26 @@ button:active {
     opacity: 1;
 }
 
-/* Project Color Themes - more vibrant and impactful */
-.project-theme-blue { 
-    --primary: #3b82f6; 
-    --secondary: #dbeafe; 
-    --accent: #2563eb;
-    --gradient: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
-}
-.project-theme-green { 
-    --primary: #10b981; 
-    --secondary: #d1fae5; 
-    --accent: #059669;
-    --gradient: linear-gradient(135deg, #34d399 0%, #10b981 100%);
-}
-.project-theme-purple { 
-    --primary: #8b5cf6; 
-    --secondary: #ede9fe; 
-    --accent: #7c3aed;
-    --gradient: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%);
-}
-.project-theme-pink { 
-    --primary: #ec4899; 
-    --secondary: #fce7f3; 
-    --accent: #db2777;
-    --gradient: linear-gradient(135deg, #f472b6 0%, #ec4899 100%);
-}
-.project-theme-orange { 
-    --primary: #f97316; 
-    --secondary: #fed7aa; 
-    --accent: #ea580c;
-    --gradient: linear-gradient(135deg, #fb923c 0%, #f97316 100%);
-}
-.project-theme-teal { 
-    --primary: #14b8a6; 
-    --secondary: #ccfbf1; 
-    --accent: #0d9488;
-    --gradient: linear-gradient(135deg, #2dd4bf 0%, #14b8a6 100%);
-}
-.project-theme-indigo { 
-    --primary: #6366f1; 
-    --secondary: #e0e7ff; 
-    --accent: #4f46e5;
-    --gradient: linear-gradient(135deg, #818cf8 0%, #6366f1 100%);
-}
-.project-theme-red { 
-    --primary: #ef4444; 
-    --secondary: #fee2e2; 
-    --accent: #dc2626;
-    --gradient: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
-}
+/* Project Color Themes - more subtle */
+.project-theme-blue { --primary: #1e40af; --secondary: #f0f9ff; --accent: #1e40af; }
+.project-theme-green { --primary: #16a34a; --secondary: #f0fdf4; --accent: #16a34a; }
+.project-theme-purple { --primary: #7c3aed; --secondary: #faf5ff; --accent: #7c3aed; }
+.project-theme-pink { --primary: #be185d; --secondary: #fdf2f8; --accent: #be185d; }
+.project-theme-orange { --primary: #c2410c; --secondary: #fff7ed; --accent: #c2410c; }
+.project-theme-teal { --primary: #0f766e; --secondary: #f0fdfa; --accent: #0f766e; }
+.project-theme-indigo { --primary: #4338ca; --secondary: #f0f9ff; --accent: #4338ca; }
+.project-theme-red { --primary: #dc2626; --secondary: #fef2f2; --accent: #dc2626; }
 
 .project-themed {
-    border-left: 4px solid var(--primary);
-    background: linear-gradient(135deg, #ffffff 0%, var(--secondary) 100%);
+    border-left: 3px solid var(--primary);
 }
 
 .project-themed .panel-header .icon {
     color: var(--accent);
-    background: var(--gradient);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    font-weight: 700;
 }
 
 .project-themed .project-title {
-    background: var(--gradient);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    color: var(--accent);
 }
 
 .archived-project {
