@@ -697,6 +697,22 @@ button:active {
     align-items: center;
 }
 
+.project-task-item {
+    background: white;
+    border: 1px solid #e5e5e5;
+    border-radius: 4px;
+    margin-bottom: 12px;
+    padding: 0px;
+    position: relative;
+    cursor: grab;
+    transition: all 0.2s ease;
+}
+
+/* Add extra space above the checkbox and title row in tasks */
+.project-task-item > div:nth-child(2) {
+    margin-top: 8px;
+}
+
 .task-completed {
     opacity: 0.6;
     text-decoration: line-through;
@@ -767,7 +783,7 @@ button:active {
 
 /* Pomodoro Timer Styles */
 .pomodoro-timer {
-    background: #171717;
+    background: #16a34a;
     border-radius: 4px;
     padding: 8px 12px;
     color: white;
@@ -776,7 +792,7 @@ button:active {
     gap: 12px;
     flex-wrap: nowrap;
     font-size: 12px;
-    border: 1px solid #404040;
+    border: 1px solid #15803d;
     transition: all 0.3s ease;
 }
 
