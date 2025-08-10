@@ -2500,6 +2500,7 @@ function switchProject() {
         currentProject = projects.find(p => p.id == projectId);
         document.getElementById('dashboard').style.display = 'grid';
         document.getElementById('projectOverview').style.display = 'none';
+        document.getElementById('topTasksRow').style.display = 'flex';
         
         // Apply project color theme
         const dashboard = document.getElementById('dashboard');
