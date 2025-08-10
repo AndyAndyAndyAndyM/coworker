@@ -544,6 +544,7 @@ function switchToProject(projectId, callback) {
     document.getElementById('projectSelect').value = project.id;
     document.getElementById('dashboard').style.display = 'grid';
     document.getElementById('projectOverview').style.display = 'none';
+    document.getElementById('topTasksRow').style.display = 'flex';
     
     // Apply project color theme
     const dashboard = document.getElementById('dashboard');
@@ -2436,6 +2437,7 @@ function showProjectOverview() {
     document.getElementById('dashboard').style.display = 'none';
     document.getElementById('projectOverview').style.display = 'block';
     document.getElementById('projectSelect').value = '';
+    document.getElementById('topTasksRow').style.display = 'none';
     currentProject = null;
     
     // Remove project themes from dashboard
