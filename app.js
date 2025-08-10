@@ -941,6 +941,8 @@ function openGlobalTaskSource(projectId, taskId) {
     document.getElementById('projectSelect').value = project.id;
     document.getElementById('dashboard').style.display = 'grid';
     document.getElementById('projectOverview').style.display = 'none';
+    document.getElementById('topTasksRow').style.display = 'flex';
+
     
     // Apply project color theme
     const dashboard = document.getElementById('dashboard');
@@ -983,6 +985,8 @@ function diveInToGlobalSource(projectId, taskId) {
     document.getElementById('projectSelect').value = project.id;
     document.getElementById('dashboard').style.display = 'grid';
     document.getElementById('projectOverview').style.display = 'none';
+    document.getElementById('topTasksRow').style.display = 'flex';
+
     
     // Apply project color theme
     const dashboard = document.getElementById('dashboard');
@@ -1890,6 +1894,8 @@ window.openTaskSourceFromSummary = function(taskId, projectName) {
         document.getElementById('projectSelect').value = project.id;
         document.getElementById('dashboard').style.display = 'grid';
         document.getElementById('projectOverview').style.display = 'none';
+        document.getElementById('topTasksRow').style.display = 'flex';
+
         
         // Apply project color theme
         const dashboard = document.getElementById('dashboard');
@@ -1969,6 +1975,8 @@ window.diveInToSource = function(taskId, projectName) {
         document.getElementById('projectSelect').value = project.id;
         document.getElementById('dashboard').style.display = 'grid';
         document.getElementById('projectOverview').style.display = 'none';
+        document.getElementById('topTasksRow').style.display = 'flex';
+
         
         // Apply project color theme
         const dashboard = document.getElementById('dashboard');
