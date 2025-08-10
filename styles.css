@@ -165,9 +165,9 @@ h1, h2, h3, h4, h5, h6,
 }
 
 .task-drop-zone.drag-over {
-    border-color: #171717;
+    border-color: #374151;
     background: #f8f8f8;
-    color: #171717;
+    color: #374151;
 }
 
 .other-tasks-section {
@@ -280,8 +280,8 @@ input, textarea, select {
 
 input:focus, textarea:focus, select:focus {
     outline: none;
-    border-color: #171717;
-    box-shadow: 0 0 0 1px #171717;
+    border-color: #374151;
+    box-shadow: 0 0 0 1px #374151;
 }
 
 textarea {
@@ -292,7 +292,7 @@ textarea {
 
 button {
     padding: 8px 16px;
-    background: #171717;
+    background: #374151;
     color: white;
     border: none;
     border-radius: 2px;
@@ -306,7 +306,7 @@ button {
 }
 
 button:hover {
-    background: #262626;
+    background: #1f2937;
     transform: translateY(-1px);
 }
 
@@ -439,9 +439,9 @@ button:active {
 }
 
 .drop-zone-mini.drag-over {
-    border-color: #171717;
+    border-color: #374151;
     background: #f8f8f8;
-    color: #171717;
+    color: #374151;
 }
 
 .item.dragging {
@@ -530,7 +530,7 @@ button:active {
 }
 
 .close-btn:hover {
-    color: #171717;
+    color: #374151;
 }
 
 /* Editor Modal Styles */
@@ -575,12 +575,12 @@ button:active {
 }
 
 .editor-header.pomodoro-active {
-    background: #171717;
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
     color: white;
 }
 
 .editor-header.pomodoro-break {
-    background: #6b7280;
+    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
     color: white;
 }
 
@@ -679,7 +679,7 @@ button:active {
 
 #richEditor:focus {
     outline: none;
-    border-color: #171717;
+    border-color: #374151;
 }
 
 .delete-btn {
@@ -791,7 +791,7 @@ button:active {
 
 /* Pomodoro Timer Styles */
 .pomodoro-timer {
-    background: #171717;
+    background: #374151;
     border-radius: 2px;
     padding: 10px 14px;
     color: white;
@@ -800,7 +800,7 @@ button:active {
     gap: 12px;
     flex-wrap: nowrap;
     font-size: 12px;
-    border: 1px solid #262626;
+    border: 1px solid #4b5563;
     transition: all 0.2s ease;
 }
 
@@ -835,7 +835,7 @@ button:active {
 .pomodoro-btn {
     background: rgba(255, 255, 255, 0.9);
     border: 1px solid rgba(255, 255, 255, 0.4);
-    color: #171717;
+    color: #374151;
     padding: 2px 6px;
     border-radius: 2px;
     font-size: 9px;
@@ -962,7 +962,7 @@ button:active {
 
 .drop-zone.drag-over {
     background: #f8f8f8;
-    border: 1px dashed #171717;
+    border: 1px dashed #374151;
     border-radius: 2px;
 }
 
@@ -972,7 +972,7 @@ button:active {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    background: #171717;
+    background: #374151;
     color: white;
     padding: 8px 16px;
     border-radius: 2px;
@@ -988,7 +988,7 @@ button:active {
     position: fixed;
     top: 20px;
     right: 20px;
-    background: #171717;
+    background: #374151;
     color: white;
     padding: 14px 18px;
     border-radius: 2px;
@@ -997,7 +997,7 @@ button:active {
     box-shadow: 0 4px 12px rgba(0,0,0,0.2);
     transform: translateX(400px);
     transition: all 0.4s ease;
-    border: 1px solid #262626;
+    border: 1px solid #4b5563;
 }
 
 .notification.show {
@@ -1027,7 +1027,7 @@ button:active {
 
 .sort-placeholder {
     height: 4px;
-    background: #171717;
+    background: #374151;
     border-radius: 2px;
     margin: 4px 0;
     opacity: 0;
@@ -1139,11 +1139,11 @@ button:active {
 
 .breadcrumb-item:hover {
     background: #e5e5e5;
-    color: #171717;
+    color: #374151;
 }
 
 .breadcrumb-item.current {
-    color: #171717;
+    color: #374151;
     font-weight: 600;
     background: #e5e5e5;
 }
@@ -1168,7 +1168,7 @@ button:active {
 
 .breadcrumb-clear:hover {
     background: #d4d4d4;
-    color: #171717;
+    color: #374151;
 }
 
 /* Context restoration indicator */
@@ -1177,7 +1177,7 @@ button:active {
     top: 10px;
     left: 50%;
     transform: translateX(-50%);
-    background: #171717;
+    background: #374151;
     color: white;
     padding: 6px 12px;
     border-radius: 2px;
