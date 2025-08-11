@@ -7,22 +7,29 @@ const getValue = (id) => { const el = getEl(id); return el ? el.value.trim() : '
 const setContent = (id, content) => { const el = getEl(id); if (el) el.textContent = content; };
 const setHTML = (id, html) => { const el = getEl(id); if (el) el.innerHTML = html; };
 
-// Storage Helpers
+// Storage Helpers - UPDATED TO USE LOCALSTORAGE
 const saveToStorage = (key, data) => {
     try {
-        // Use in-memory storage instead of localStorage for Claude.ai compatibility
-        if (!window.appStorage) window.appStorage = {};
-        window.appStorage[key] = JSON.stringify(data);
+        localStorage.setItem(key, JSON.stringify(data));
     } catch (error) {
         console.error(`Error saving ${key}:`, error);
+        // Fallback to in-memory storage if localStorage fails
+        if (!window.appStorage) window.appStorage = {};
+        window.appStorage[key] = JSON.stringify(data);
     }
 };
 
 const loadFromStorage = (key, defaultValue = null) => {
     try {
-        if (!window.appStorage) window.appStorage = {};
-        const saved = window.appStorage[key];
-        return saved ? JSON.parse(saved) : defaultValue;
+        const saved = localStorage.getItem(key);
+        if (saved) {
+            return JSON.parse(saved);
+        }
+        // Check fallback storage if localStorage is empty
+        if (window.appStorage && window.appStorage[key]) {
+            return JSON.parse(window.appStorage[key]);
+        }
+        return defaultValue;
     } catch (error) {
         console.error(`Error loading ${key}:`, error);
         return defaultValue;
