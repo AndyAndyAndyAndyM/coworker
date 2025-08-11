@@ -749,7 +749,7 @@ function openGlobalTaskSource(projectId, taskId) {
     setValue('projectSelect', project.id);
     setDisplay('dashboard', 'grid');
     setDisplay('projectOverview', 'none');
-    setDisplay('topTasksRow', 'flex');
+    setDisplay('topTasksRow', 'flex'); // Make sure horizontal row is visible
 
     
     // Apply project color theme
@@ -762,7 +762,7 @@ function openGlobalTaskSource(projectId, taskId) {
     }
     dashboard.classList.add('project-themed');
     
-    renderProject();
+    renderProject(); // This now includes horizontal top tasks
     
     // Open the appropriate editor after a delay
     setTimeout(() => {
@@ -793,7 +793,7 @@ function diveInToGlobalSource(projectId, taskId) {
     setValue('projectSelect', project.id);
     setDisplay('dashboard', 'grid');
     setDisplay('projectOverview', 'none');
-    setDisplay('topTasksRow', 'flex');
+    setDisplay('topTasksRow', 'flex'); // Make sure horizontal row is visible
 
     
     // Apply project color theme
@@ -806,7 +806,7 @@ function diveInToGlobalSource(projectId, taskId) {
     }
     dashboard.classList.add('project-themed');
     
-    renderProject();
+    renderProject(); // This now includes horizontal top tasks
     
     // Find the source item and dive in
     setTimeout(() => {
@@ -1291,6 +1291,7 @@ function createItemFromDrop(sourceItem, sourceType, targetType) {
         
         currentProject.tasks.unshift(newItem);
         renderProjectTasks();
+        renderHorizontalTopTasks(); // Update horizontal view
         showNotification(`Created task "${newItem.title}" from ${sourceType}`);
     } else if (sourceType === 'brief' && (targetType === 'note' || targetType === 'copy')) {
         // Brief dropped on note/copy creates linked item
@@ -2351,7 +2352,7 @@ function switchProject() {
         currentProject = projects.find(p => p.id == projectId);
         setDisplay('dashboard', 'grid');
         setDisplay('projectOverview', 'none');
-        setDisplay('topTasksRow', 'flex');
+        setDisplay('topTasksRow', 'flex'); // Make sure horizontal row is visible
         
         // Apply project color theme
         const dashboard = getEl('dashboard');
@@ -2366,7 +2367,7 @@ function switchProject() {
         dashboard.classList.add('project-themed');
         
         updateSettingsButton();
-        renderProject();
+        renderProject(); // This now includes horizontal top tasks
         
         // Check for previous work context in this project
         const contextKey = `project-${projectId}`;
@@ -2896,6 +2897,7 @@ function addQuickTask() {
         currentProject.tasks.unshift(task);
         saveProjects();
         renderProjectTasks(); // Updated function name
+        renderHorizontalTopTasks(); // Update horizontal view
         
         // Clear input
         setValue('taskTitle', '');
@@ -3366,6 +3368,7 @@ function toggleProjectTask(taskId) {
         }
         saveProjects();
         renderProjectTasks();
+        renderHorizontalTopTasks(); // Update horizontal view
         
         // Force immediate re-render of global tasks
         setTimeout(() => {
@@ -4093,7 +4096,23 @@ document.addEventListener('keydown', (e) => {
         globalTaskOrder.topThree = [];
         saveGlobalTaskOrder();
         renderGlobalTasks();
+        
+        // Update horizontal view if on project page
+        if (currentProject) {
+            renderHorizontalTopTasks();
+        }
+        
         showNotification('Top 3 tasks cleared');
+    }
+    
+    if (e.key === '3' && e.ctrlKey && e.altKey) {
+        e.preventDefault();
+        // Auto-populate horizontal top tasks for current project
+        if (currentProject) {
+            autoPopulateHorizontalTopTasks();
+            renderHorizontalTopTasks();
+            showNotification('Horizontal top tasks auto-populated');
+        }
     }
     
     // Pomodoro shortcuts when editor is open
@@ -4182,6 +4201,18 @@ window.setupTopTasksDropZones = setupTopTasksDropZones;
 window.renderTopTasksWithButtons = renderTopTasksWithButtons;
 window.autoPopulateTopThree = autoPopulateTopThree;
 window.initializeTopTasksSystem = initializeTopTasksSystem;
+
+// ENHANCED: Horizontal top tasks functions made globally available
+window.renderHorizontalTopTasks = renderHorizontalTopTasks;
+window.toggleHorizontalTask = toggleHorizontalTask;
+window.setupHorizontalTasksDropZones = setupHorizontalTasksDropZones;
+window.autoPopulateHorizontalTopTasks = autoPopulateHorizontalTopTasks;
+window.renderProjectWithTopTasks = renderProjectWithTopTasks;
+window.handleHorizontalTaskDragStart = handleHorizontalTaskDragStart;
+window.handleHorizontalTaskDragEnd = handleHorizontalTaskDragEnd;
+window.handleHorizontalDragOver = handleHorizontalDragOver;
+window.handleHorizontalDragLeave = handleHorizontalDragLeave;
+window.handleHorizontalDrop = handleHorizontalDrop;
 
 // Helper render functions with original names for compatibility
 window.renderBriefs = renderBriefs;
