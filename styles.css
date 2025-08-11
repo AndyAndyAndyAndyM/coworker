@@ -32,7 +32,34 @@ h1, h2, h3, h4, h5, h6,
     justify-content: space-between;
     align-items: center;
 }
+kbd {
+    background-color: #f1f3f4;
+    border: 1px solid #c1c7cd;
+    border-radius: 3px;
+    box-shadow: 0 1px 1px rgba(0,0,0,.2), 0 2px 0 0 rgba(255,255,255,.7) inset;
+    color: #202124;
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1;
+    padding: 2px 4px;
+    white-space: nowrap;
+    font-family: monospace;
+}
 
+.modal-content table {
+    border-collapse: collapse;
+}
+
+.modal-content table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.modal-content table td:first-child {
+    font-family: monospace;
+    font-weight: 500;
+}
 .project-selector {
     display: flex;
     align-items: center;
