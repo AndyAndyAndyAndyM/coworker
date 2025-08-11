@@ -765,9 +765,27 @@ function sortTasksWithCompletedAtBottom(tasks) {
 
 // ===== DOCUMENT UPLOAD AND PROCESSING =====
 
+// Try to load mammoth library for document processing
+let mammothLibrary = null;
+try {
+    // Import mammoth if available
+    if (typeof mammoth !== 'undefined') {
+        mammothLibrary = mammoth;
+    }
+} catch (e) {
+    console.log('Mammoth library not available, document upload will use fallback');
+}
+
 function setupDocumentUpload() {
     const briefFields = getEl('briefFields');
     if (!briefFields) return;
+    
+    // Check if upload zone already exists to prevent duplicates
+    const existingUploadZone = briefFields.querySelector('.document-upload-zone');
+    if (existingUploadZone) {
+        console.log('Document upload zone already exists, skipping setup');
+        return;
+    }
     
     // Add drag and drop zone to client brief area
     const clientBriefField = getEl('editorClientBrief');
@@ -788,16 +806,27 @@ function setupDocumentUpload() {
         transition: all 0.2s ease;
     `;
     
+    // Show different message based on library availability
+    const isLibraryAvailable = mammothLibrary !== null;
     uploadZone.innerHTML = `
-        <div style="font-size: 14px; margin-bottom: 4px;">📄 Drop Word document here</div>
-        <div style="font-size: 12px; opacity: 0.7;">Or click to browse files (.docx)</div>
-        <input type="file" accept=".docx" style="display: none;" id="docxFileInput">
+        <div style="font-size: 14px; margin-bottom: 4px;">📄 ${isLibraryAvailable ? 'Drop Word document here' : 'Document upload'}</div>
+        <div style="font-size: 12px; opacity: 0.7;">${isLibraryAvailable ? 'Or click to browse files (.docx)' : 'Feature requires document processing library'}</div>
+        ${isLibraryAvailable ? '<input type="file" accept=".docx,.doc" style="display: none;" class="docx-file-input">' : ''}
     `;
+    
+    // Only add functionality if library is available
+    if (!isLibraryAvailable) {
+        uploadZone.style.opacity = '0.5';
+        uploadZone.style.cursor = 'not-allowed';
+        uploadZone.title = 'Document processing not available in this environment';
+        clientBriefField.parentNode.insertBefore(uploadZone, clientBriefField);
+        return;
+    }
     
     // Insert upload zone before client brief field
     clientBriefField.parentNode.insertBefore(uploadZone, clientBriefField);
     
-    const fileInput = getEl('docxFileInput');
+    const fileInput = uploadZone.querySelector('.docx-file-input');
     
     // Handle click to browse
     uploadZone.addEventListener('click', () => {
@@ -833,10 +862,10 @@ function setupDocumentUpload() {
         const files = e.dataTransfer.files;
         if (files.length > 0) {
             const file = files[0];
-            if (file.name.endsWith('.docx')) {
+            if (file.name.endsWith('.docx') || file.name.endsWith('.doc')) {
                 processWordDocument(file);
             } else {
-                showNotification('Please select a .docx file');
+                showNotification('Please select a .docx or .doc file');
             }
         }
     });
@@ -846,22 +875,34 @@ async function processWordDocument(file) {
     try {
         showNotification('Processing document...');
         
+        // Check if mammoth is available
+        if (!mammothLibrary) {
+            throw new Error('Document processing library not available');
+        }
+        
         // Read file as array buffer
         const arrayBuffer = await file.arrayBuffer();
         
         // Use mammoth to extract text with basic formatting
-        const result = await mammoth.extractRawText(arrayBuffer);
+        const result = await mammothLibrary.extractRawText({arrayBuffer: arrayBuffer});
         
-        if (result.value) {
+        if (result.value && result.value.trim()) {
             // Insert extracted text into client brief field
             const clientBriefField = getEl('editorClientBrief');
             if (clientBriefField) {
-                clientBriefField.value = result.value;
+                // Clean up the text - remove excessive whitespace and normalize line breaks
+                const cleanedText = result.value
+                    .replace(/\r\n/g, '\n')  // Normalize line breaks
+                    .replace(/\r/g, '\n')    // Handle old Mac line breaks
+                    .replace(/\n{3,}/g, '\n\n')  // Replace multiple line breaks with double
+                    .trim();
+                
+                clientBriefField.value = cleanedText;
                 
                 // Trigger autosave
                 debouncedAutosave();
                 
-                showNotification('Document imported successfully!');
+                showNotification(`Document imported successfully! (${Math.round(cleanedText.length / 1000)}k characters)`);
             }
         } else {
             showNotification('No text content found in document');
@@ -869,11 +910,34 @@ async function processWordDocument(file) {
         
         if (result.messages && result.messages.length > 0) {
             console.log('Document processing messages:', result.messages);
+            // Show warnings if any
+            const warnings = result.messages.filter(msg => msg.type === 'warning');
+            if (warnings.length > 0) {
+                console.warn('Document processing warnings:', warnings);
+            }
         }
         
     } catch (error) {
         console.error('Error processing document:', error);
-        showNotification('Error processing document. Please try again.');
+        
+        // Provide more specific error messages
+        let errorMessage = 'Error processing document. ';
+        if (error.message.includes('not available')) {
+            errorMessage += 'Document processing feature is not available.';
+        } else if (error.message.includes('Invalid file')) {
+            errorMessage += 'Invalid file format. Please use .docx files.';
+        } else if (error.message.includes('arrayBuffer')) {
+            errorMessage += 'Unable to read file. Please try again.';
+        } else {
+            errorMessage += 'Please try again or use copy/paste instead.';
+        }
+        
+        showNotification(errorMessage);
+        
+        // Fallback suggestion
+        setTimeout(() => {
+            showNotification('Tip: You can also copy text from Word and paste it directly into the field');
+        }, 3000);
     }
 }
 
@@ -1894,7 +1958,7 @@ function restoreContext(context) {
     // Open the item editor
     openItemEditor(item, context.itemType);
     
-    // Restore editor state after a short delay
+    // Restore editor state after a delay
     setTimeout(() => {
         restoreEditorState(context);
         showContextIndicator(`Resumed: ${context.title}`, true);
@@ -4361,7 +4425,7 @@ window.renderGlobalTasks = renderGlobalTasks;
 
 console.log('Creative Project Manager loaded successfully!');
 console.log('Features:');
-console.log('✓ Document upload for briefs (.docx files)');
+console.log('✓ Document upload for briefs (.docx files) - Fixed duplicate zones & processing');
 console.log('✓ Global task management system');
 console.log('✓ Smart breadcrumb trail (screen-width limited)');
 console.log('✓ Brief deletion preserves linked items');
