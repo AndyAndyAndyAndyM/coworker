@@ -3792,6 +3792,110 @@ function cleanupGlobalTaskOrder() {
     saveGlobalTaskOrder();
 }
 
+// DEBUG: Add these debugging functions to help identify the issue
+function debugTopTasks() {
+    console.log('=== DEBUG TOP TASKS ===');
+    console.log('Current project:', currentProject);
+    console.log('Top tasks row element:', getEl('topTasksRow'));
+    console.log('Global task order:', globalTaskOrder);
+    
+    if (currentProject) {
+        console.log('Current project tasks:', currentProject.tasks);
+        console.log('Current project task count:', currentProject.tasks ? currentProject.tasks.length : 0);
+    }
+    
+    // Try to manually render horizontal top tasks
+    console.log('Attempting to render horizontal top tasks...');
+    renderHorizontalTopTasks();
+}
+
+function manuallyPopulateTopTasks() {
+    if (!currentProject || !currentProject.tasks) {
+        console.log('No current project or tasks');
+        return;
+    }
+    
+    console.log('Manually populating top tasks...');
+    
+    // Get first 3 incomplete tasks
+    const incompleteTasks = currentProject.tasks.filter(task => !task.completed).slice(0, 3);
+    
+    // Clear existing global order for this project
+    globalTaskOrder.topThree = globalTaskOrder.topThree.filter(uniqueId => {
+        const [projectId] = uniqueId.split('-');
+        return projectId != currentProject.id;
+    });
+    
+    // Add these tasks to global top three
+    incompleteTasks.forEach(task => {
+        const uniqueId = createTaskUniqueId(currentProject.id, task.id);
+        globalTaskOrder.topThree.push(uniqueId);
+    });
+    
+    saveGlobalTaskOrder();
+    renderHorizontalTopTasks();
+    
+    console.log('Manual population complete');
+}
+
+function simpleRenderTopTasks() {
+    const container = getEl('topTasksRow');
+    if (!container || !currentProject) {
+        console.log('Cannot render - missing container or project');
+        return;
+    }
+    
+    console.log('Simple render starting...');
+    
+    // Get first 3 tasks from current project
+    const tasks = currentProject.tasks ? currentProject.tasks.filter(t => !t.completed).slice(0, 3) : [];
+    
+    container.innerHTML = '';
+    
+    for (let i = 0; i < 3; i++) {
+        const task = tasks[i];
+        
+        if (task) {
+            // Create simple task element
+            const taskEl = document.createElement('div');
+            taskEl.className = 'top-task-item';
+            taskEl.innerHTML = `
+                <div class="task-title">${task.title}</div>
+                <div class="task-meta">Created: ${formatDate(task.createdAt)}</div>
+                <input type="checkbox" class="task-checkbox" ${task.completed ? 'checked' : ''}>
+            `;
+            container.appendChild(taskEl);
+            console.log('Added task:', task.title);
+        } else {
+            // Create simple drop zone
+            const dropEl = document.createElement('div');
+            dropEl.className = 'top-tasks-drop-zone';
+            container.appendChild(dropEl);
+            console.log('Added drop zone for position', i);
+        }
+    }
+    
+    console.log('Simple render complete');
+}
+
+function forceInitializeTopTasks() {
+    if (!currentProject) return;
+    
+    console.log('Force initializing top tasks for project:', currentProject.name);
+    
+    // Clear any existing content
+    const container = getEl('topTasksRow');
+    if (container) {
+        container.innerHTML = '';
+        container.style.display = 'flex';
+    }
+    
+    // Force population
+    autoPopulateHorizontalTopTasks();
+    renderHorizontalTopTasks();
+    setupHorizontalTasksDropZones();
+}
+
 // Setup delete button event listeners
 function setupDeleteListeners() {
     // Remove existing listeners first
