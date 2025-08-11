@@ -8,10 +8,20 @@ const setContent = (id, content) => { const el = getEl(id); if (el) el.textConte
 const setHTML = (id, html) => { const el = getEl(id); if (el) el.innerHTML = html; };
 
 // Storage Helpers
-const saveToStorage = (key, data) => localStorage.setItem(key, JSON.stringify(data));
+const saveToStorage = (key, data) => {
+    try {
+        // Use in-memory storage instead of localStorage for Claude.ai compatibility
+        if (!window.appStorage) window.appStorage = {};
+        window.appStorage[key] = JSON.stringify(data);
+    } catch (error) {
+        console.error(`Error saving ${key}:`, error);
+    }
+};
+
 const loadFromStorage = (key, defaultValue = null) => {
     try {
-        const saved = localStorage.getItem(key);
+        if (!window.appStorage) window.appStorage = {};
+        const saved = window.appStorage[key];
         return saved ? JSON.parse(saved) : defaultValue;
     } catch (error) {
         console.error(`Error loading ${key}:`, error);
@@ -218,11 +228,168 @@ function getOrderedGlobalTasks() {
     return { topThree: topThreeTasks, other: sortedOther };
 }
 
+// ENHANCED: Updated renderGlobalTasks to use new system
 function renderGlobalTasks() {
+    renderTopTasksWithButtons(); // Use the enhanced version with promote/demote buttons
+}
+
+// ENHANCED: New function with promote/demote buttons
+function renderTopTasksWithButtons() {
     const { topThree, other } = getOrderedGlobalTasks();
     
-    renderTaskSection('topThreeTasks', topThree, true);
-    renderTaskSection('otherTasks', other, false);
+    renderTaskSectionWithButtons('topThreeTasks', topThree, true);
+    renderTaskSectionWithButtons('otherTasks', other, false);
+}
+
+function renderTaskSectionWithButtons(containerId, tasks, isTopThree) {
+    const container = getEl(containerId);
+    if (!container) return;
+    
+    if (tasks.length === 0) {
+        const message = isTopThree ? 
+            'Drop your most important tasks here' : 
+            'All other tasks appear here';
+        container.innerHTML = `
+            <div class="task-drop-zone" style="
+                border: 2px dashed #d1d5db;
+                border-radius: 8px;
+                padding: 40px;
+                text-align: center;
+                color: #6b7280;
+                background: #f9fafb;
+                margin: 8px 0;
+            ">
+                <div style="font-size: 14px; margin-bottom: 4px;">${message}</div>
+                <div style="font-size: 12px; opacity: 0.7;">Drag tasks here to organize</div>
+            </div>
+        `;
+        container.className = 'task-drop-zone';
+        return;
+    }
+    
+    container.className = '';
+    container.innerHTML = tasks.map(task => {
+        const uniqueId = createTaskUniqueId(task.projectId, task.id);
+        const hasSource = task.sourceItemId && task.sourceItemType;
+        const canDiveIn = hasSource && (task.sourceItemType === 'note' || task.sourceItemType === 'copy');
+        
+        // Get link color for the task
+        let linkColor = '#10b981'; // Default green
+        if (hasSource) {
+            const project = projects.find(p => p.id == task.projectId);
+            if (project) {
+                let sourceItem = null;
+                switch(task.sourceItemType) {
+                    case 'brief':
+                        sourceItem = project.briefs?.find(b => b.id === task.sourceItemId);
+                        break;
+                    case 'note':
+                        sourceItem = project.notes?.find(n => n.id === task.sourceItemId);
+                        if (sourceItem?.linkedBriefId) {
+                            const brief = project.briefs?.find(b => b.id === sourceItem.linkedBriefId);
+                            linkColor = brief?.linkColor || linkColor;
+                        }
+                        break;
+                    case 'copy':
+                        sourceItem = project.copy?.find(c => c.id === task.sourceItemId);
+                        if (sourceItem?.linkedBriefId) {
+                            const brief = project.briefs?.find(b => b.id === sourceItem.linkedBriefId);
+                            linkColor = brief?.linkColor || linkColor;
+                        }
+                        break;
+                }
+                if (sourceItem && task.sourceItemType === 'brief') {
+                    linkColor = sourceItem.linkColor || linkColor;
+                }
+            }
+        }
+        
+        return `
+            <div class="global-task-item ${isTopThree ? 'top-three-task' : ''}" 
+                 draggable="true"
+                 data-unique-id="${uniqueId}"
+                 data-project-id="${task.projectId}"
+                 data-task-id="${task.id}"
+                 ondragstart="handleGlobalTaskDragStart(event)"
+                 ondragend="handleGlobalTaskDragEnd(event)"
+                 style="
+                    background: white;
+                    border: 1px solid #e5e5e5;
+                    border-left: 3px solid ${linkColor};
+                    border-radius: 4px;
+                    margin-bottom: 12px;
+                    padding: 0px;
+                    position: relative;
+                    cursor: grab;
+                    transition: all 0.2s ease;
+                    ${task.completed ? 'opacity: 0.6;' : ''}
+                    ${isTopThree ? 'box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);' : ''}
+                 ">
+                
+                <div style="position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; align-items: center;">
+                    <div style="background: #f5f5f5; color: #525252; padding: 2px 6px; border-radius: 2px; font-size: 10px; font-weight: 600; text-transform: uppercase;">
+                        ${isTopThree ? 'Priority' : 'Task'}
+                    </div>
+                    ${!isTopThree ? `
+                        <button onclick="event.stopPropagation(); promoteToTopThree('${task.projectId}', '${task.id}')" 
+                                style="background: #3b82f6; color: white; border: none; padding: 2px 6px; border-radius: 2px; font-size: 10px; cursor: pointer; font-weight: 600;"
+                                title="Add to Top 3">
+                            ★
+                        </button>
+                    ` : `
+                        <button onclick="event.stopPropagation(); removeTaskFromTopThree('${task.projectId}', '${task.id}')" 
+                                style="background: #6b7280; color: white; border: none; padding: 2px 6px; border-radius: 2px; font-size: 10px; cursor: pointer;"
+                                title="Remove from Top 3">
+                            ×
+                        </button>
+                    `}
+                </div>
+                
+                <div style="display: flex; gap: 0px; align-items: flex-start; margin-bottom: 6px; padding: 0px; margin: 0px;">
+                    <div style="background-color: transparent; border: none; margin: 0; margin-left: 39px; margin-top: 5px; padding: 0; flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;">
+                        <input type="checkbox" 
+                               ${task.completed ? 'checked' : ''}
+                               onclick="event.stopPropagation(); toggleGlobalTask('${task.projectId}', '${task.id}')"
+                               style="width: 16px; height: 16px; margin: 0; padding: 0; cursor: pointer;">
+                    </div>
+                    <div style="flex: 1; min-width: 0; margin: 0; padding: 0; padding-left: 8px; padding-right: 80px;">
+                        <div style="font-weight: 600; color: #171717; font-size: 14px; line-height: 1.4; margin: 0; padding: 0; ${task.completed ? 'text-decoration: line-through;' : ''}">${task.title}</div>
+                    </div>
+                </div>
+                
+                <div style="position: absolute; left: 8px; top: 16px;">
+                    <div class="grab-handle"></div>
+                </div>
+                
+                <div style="font-size: 12px; color: #737373; margin-bottom: 8px; padding-left: 63px; padding-right: 80px; ${task.completed ? 'text-decoration: line-through;' : ''}">
+                    <span class="global-task-project project-theme-${task.projectColorTheme || 'blue'}">${task.projectName}</span>
+                    Created: ${formatDate(task.createdAt)}
+                    ${hasSource ? ` • Has source` : ''}
+                    ${task.completed && task.completedAt ? ` • Completed: ${formatDate(task.completedAt)}` : ''}
+                </div>
+                
+                ${task.content ? `
+                    <div style="margin: 6px 0; color: #525252; line-height: 1.4; font-size: 13px; padding-left: 63px; padding-right: 80px; ${task.completed ? 'text-decoration: line-through;' : ''}">
+                        ${truncateContent(task.content)}
+                    </div>
+                ` : ''}
+                
+                <div style="font-size: 11px; color: #a3a3a3; font-style: italic; margin-top: 8px; margin-bottom: 8px; padding-left: 63px; padding-right: 8px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>${hasSource ? 'Click to open source' : 'Click to edit'} • Drag to reorder</span>
+                    <div style="display: flex; gap: 8px;">
+                        <button onclick="event.stopPropagation(); openGlobalTaskSource('${task.projectId}', '${task.id}')" style="background: #171717; color: white; border: none; padding: 2px 6px; border-radius: 2px; font-size: 10px; cursor: pointer;">
+                            ${hasSource ? 'Open' : 'Edit'}
+                        </button>
+                        ${canDiveIn ? `
+                            <span style="background: #fce7f3; color: #be185d; padding: 2px 6px; border-radius: 2px; font-size: 10px; font-weight: 600; text-transform: uppercase; cursor: pointer;" onclick="event.stopPropagation(); diveInToGlobalSource('${task.projectId}', '${task.id}')" title="Open in focus mode with Pomodoro">
+                                Dive In
+                            </span>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
 }
 
 function renderTaskSection(containerId, tasks, isTopThree) {
@@ -350,6 +517,118 @@ function renderTaskSection(containerId, tasks, isTopThree) {
             </div>
         `;
     }).join('');
+}
+
+// ENHANCED: New top tasks functions
+function addTaskToTopThree(projectId, taskId) {
+    const uniqueId = createTaskUniqueId(projectId, taskId);
+    
+    // Remove from other if it exists there
+    globalTaskOrder.other = globalTaskOrder.other.filter(id => id !== uniqueId);
+    
+    // Remove from top three if it already exists (avoid duplicates)
+    globalTaskOrder.topThree = globalTaskOrder.topThree.filter(id => id !== uniqueId);
+    
+    // Add to top three (but respect the limit of 3)
+    if (globalTaskOrder.topThree.length >= 3) {
+        // Move the last item from top three to other
+        const lastTopThree = globalTaskOrder.topThree.pop();
+        globalTaskOrder.other.unshift(lastTopThree);
+    }
+    
+    globalTaskOrder.topThree.push(uniqueId);
+    
+    saveGlobalTaskOrder();
+    renderGlobalTasks();
+    showNotification('Task added to Top 3');
+}
+
+function removeTaskFromTopThree(projectId, taskId) {
+    const uniqueId = createTaskUniqueId(projectId, taskId);
+    
+    // Remove from top three
+    globalTaskOrder.topThree = globalTaskOrder.topThree.filter(id => id !== uniqueId);
+    
+    // Add to other tasks (at the beginning)
+    if (!globalTaskOrder.other.includes(uniqueId)) {
+        globalTaskOrder.other.unshift(uniqueId);
+    }
+    
+    saveGlobalTaskOrder();
+    renderGlobalTasks();
+    showNotification('Task removed from Top 3');
+}
+
+function promoteToTopThree(projectId, taskId) {
+    const task = getAllTasks().find(t => 
+        t.projectId == projectId && t.id == taskId && !t.completed
+    );
+    
+    if (!task) {
+        showNotification('Task not found or is completed');
+        return;
+    }
+    
+    addTaskToTopThree(projectId, taskId);
+}
+
+function setupTopTasksDropZones() {
+    const topThreeContainer = getEl('topThreeTasks');
+    const otherTasksContainer = getEl('otherTasks');
+    
+    if (topThreeContainer) {
+        topThreeContainer.addEventListener('dragover', handleTaskDragOver);
+        topThreeContainer.addEventListener('dragleave', handleTaskDragLeave);
+        topThreeContainer.addEventListener('drop', (e) => handleTaskDrop(e, 'top-three'));
+    }
+    
+    if (otherTasksContainer) {
+        otherTasksContainer.addEventListener('dragover', handleTaskDragOver);
+        otherTasksContainer.addEventListener('dragleave', handleTaskDragLeave);
+        otherTasksContainer.addEventListener('drop', (e) => handleTaskDrop(e, 'other'));
+    }
+}
+
+function autoPopulateTopThree() {
+    if (globalTaskOrder.topThree.length === 0) {
+        const allTasks = getAllTasks().filter(task => !task.completed);
+        
+        // Sort by creation date (most recent first)
+        allTasks.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        
+        // Take up to 3 most recent tasks
+        const tasksToAdd = allTasks.slice(0, 3);
+        
+        tasksToAdd.forEach(task => {
+            const uniqueId = createTaskUniqueId(task.projectId, task.id);
+            globalTaskOrder.topThree.push(uniqueId);
+        });
+        
+        saveGlobalTaskOrder();
+        
+        if (tasksToAdd.length > 0) {
+            console.log(`Auto-populated top 3 with ${tasksToAdd.length} recent tasks`);
+        }
+    }
+}
+
+function initializeTopTasksSystem() {
+    // Load existing data
+    loadGlobalTaskOrder();
+    
+    // Clean up stale references
+    cleanupGlobalTaskOrder();
+    
+    // Auto-populate if empty
+    autoPopulateTopThree();
+    
+    // Setup drop zones
+    setupTopTasksDropZones();
+    
+    // Initial render
+    renderTopTasksWithButtons();
+    
+    console.log('Top tasks system fully initialized');
 }
 
 // Global task drag and drop handlers
@@ -1966,7 +2245,9 @@ function loadPomodoroState() {
 }
 
 function clearPomodoroState() {
-    localStorage.removeItem('pomodoroState');
+    if (window.appStorage) {
+        delete window.appStorage['pomodoroState'];
+    }
 }
 
 // Essential functions that need to be available immediately - defined globally so HTML can access them
@@ -3541,13 +3822,13 @@ function handleDeleteClick(event) {
     }
 }
 
-// Initialize on load
-document.addEventListener('DOMContentLoaded', function() {
+// UPDATED: Enhanced initialization function
+function initializeApp() {
     try {
         // Load work context first
         loadWorkContext();
         
-        // Load projects from localStorage with error handling
+        // Load projects from storage with error handling
         const savedProjects = loadFromStorage('projects');
         if (savedProjects) {
             projects = Array.isArray(savedProjects) ? savedProjects : [];
@@ -3629,9 +3910,8 @@ document.addEventListener('DOMContentLoaded', function() {
             initializeLinkColorIndex();
         }
         
-        // Load global task order and clean up stale references
-        loadGlobalTaskOrder();
-        cleanupGlobalTaskOrder();
+        // ENHANCED: Initialize top tasks system
+        initializeTopTasksSystem();
         
         // Clean up old completed tasks (24+ hours old)
         cleanupOldCompletedTasks();
@@ -3679,7 +3959,10 @@ document.addEventListener('DOMContentLoaded', function() {
         setupDeleteListeners();
         renderBreadcrumbs();
     }
-});
+}
+
+// Initialize on load
+document.addEventListener('DOMContentLoaded', initializeApp);
 
 // Listen for fullscreen changes
 document.addEventListener('fullscreenchange', function() {
@@ -3788,6 +4071,31 @@ document.addEventListener('keydown', (e) => {
         }
     }
     
+    // ENHANCED: Top tasks keyboard shortcuts
+    if (e.key === '1' && e.ctrlKey && e.altKey) {
+        e.preventDefault();
+        // Quick promote most recent task to top 3
+        const allTasks = getAllTasks().filter(task => !task.completed);
+        if (allTasks.length > 0) {
+            // Sort by creation date (most recent first)
+            allTasks.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            const mostRecentTask = allTasks[0];
+            promoteToTopThree(mostRecentTask.projectId, mostRecentTask.id);
+        }
+    }
+    
+    if (e.key === '2' && e.ctrlKey && e.altKey) {
+        e.preventDefault();
+        // Clear top 3 tasks
+        globalTaskOrder.topThree.forEach(uniqueId => {
+            globalTaskOrder.other.unshift(uniqueId);
+        });
+        globalTaskOrder.topThree = [];
+        saveGlobalTaskOrder();
+        renderGlobalTasks();
+        showNotification('Top 3 tasks cleared');
+    }
+    
     // Pomodoro shortcuts when editor is open
     if (getEl('itemEditor').style.display === 'block') {
         const pomodoroTimer = getEl('pomodoroTimer');
@@ -3865,6 +4173,15 @@ window.resetPomodoro = resetPomodoro;
 window.skipPomodoro = skipPomodoro;
 window.toggleProjectTask = toggleProjectTask;
 window.diveInToProjectSource = diveInToProjectSource;
+
+// ENHANCED: New top tasks functions made globally available
+window.addTaskToTopThree = addTaskToTopThree;
+window.removeTaskFromTopThree = removeTaskFromTopThree;
+window.promoteToTopThree = promoteToTopThree;
+window.setupTopTasksDropZones = setupTopTasksDropZones;
+window.renderTopTasksWithButtons = renderTopTasksWithButtons;
+window.autoPopulateTopThree = autoPopulateTopThree;
+window.initializeTopTasksSystem = initializeTopTasksSystem;
 
 // Helper render functions with original names for compatibility
 window.renderBriefs = renderBriefs;
