@@ -58,7 +58,7 @@ const showNotification = (message) => {
     }, 3000);
 };
 
-// ===== ORIGINAL CODE WITH MINIMAL HELPER USAGE =====
+// ===== MAIN APPLICATION CODE =====
 
 // Initialize data storage
 let projects = [];
@@ -71,8 +71,9 @@ let showArchived = false;
 let autosaveTimeout = null;
 let hasUnsavedChanges = false;
 
-// Project-specific top tasks management (replaces old global system)
-let draggedTopTask = null;
+// Global tasks management (keeping this for overview page)
+let globalTaskOrder = { topThree: [], other: [] };
+let draggedGlobalTask = null;
 
 // Pomodoro timer variables
 let pomodoroTimer = null;
@@ -162,465 +163,555 @@ function getLinkColor(item, itemType) {
     return null;
 }
 
-// ===== PROJECT-SPECIFIC TOP TASKS SYSTEM =====
+// ===== GLOBAL TASKS FUNCTIONS (KEEPING FOR OVERVIEW PAGE) =====
 
-// Project-specific top tasks management (replaces global system)
-function getProjectTopTasks() {
-    if (!currentProject) return { topThree: [], other: [] };
-    
-    // Initialize topTaskIds if it doesn't exist
-    if (!currentProject.topTaskIds) {
-        currentProject.topTaskIds = [];
-    }
-    
-    const allProjectTasks = currentProject.tasks || [];
+function getAllTasks() {
+    let allTasks = [];
+    projects.forEach(project => {
+        if (project.tasks && Array.isArray(project.tasks)) {
+            project.tasks.forEach(task => {
+                allTasks.push({
+                    ...task,
+                    projectName: project.name,
+                    projectId: project.id,
+                    projectColorTheme: project.colorTheme
+                });
+            });
+        }
+    });
+    return allTasks;
+}
+
+function getOrderedGlobalTasks() {
+    const allTasks = getAllTasks();
     const taskMap = new Map();
     
-    // Create a map of tasks by ID
-    allProjectTasks.forEach(task => {
-        taskMap.set(task.id, task);
+    // Create a map of tasks by unique ID (projectId + taskId)
+    allTasks.forEach(task => {
+        const uniqueId = createTaskUniqueId(task.projectId, task.id);
+        taskMap.set(uniqueId, task);
     });
     
-    // Get top three tasks based on project's topTaskIds, excluding completed tasks
-    const topThreeTasks = currentProject.topTaskIds
+    // Get ordered tasks based on globalTaskOrder, but exclude completed tasks from top three
+    const topThreeTasks = globalTaskOrder.topThree
         .map(id => taskMap.get(id))
-        .filter(task => task && !task.completed)
+        .filter(task => task && !task.completed) // Exclude completed tasks from top three
         .slice(0, 3); // Ensure only top 3
     
-    const topThreeIds = new Set(currentProject.topTaskIds.slice(0, 3));
+    const otherTaskIds = new Set(globalTaskOrder.other);
+    const topThreeIds = new Set(globalTaskOrder.topThree.slice(0, 3));
     
-    // Get other tasks (not in top three)
-    const otherTasks = allProjectTasks.filter(task => 
-        !topThreeIds.has(task.id) && !task.completed
-    );
+    // Get other tasks (either in other order or not in any order)
+    const otherTasks = [];
+    
+    // First add tasks that are specifically in the "other" order
+    globalTaskOrder.other.forEach(id => {
+        const task = taskMap.get(id);
+        if (task && !topThreeIds.has(id)) {
+            otherTasks.push(task);
+        }
+    });
+    
+    // Then add any remaining tasks that aren't in either list
+    allTasks.forEach(task => {
+        const uniqueId = createTaskUniqueId(task.projectId, task.id);
+        if (!topThreeIds.has(uniqueId) && !otherTaskIds.has(uniqueId)) {
+            otherTasks.push(task);
+        }
+    });
     
     // Sort other tasks with completed tasks at bottom
-    const sortedOther = sortTasksWithCompletedAtBottom([...allProjectTasks.filter(task => 
-        !topThreeIds.has(task.id)
-    )]);
+    const sortedOther = sortTasksWithCompletedAtBottom(otherTasks);
     
     return { topThree: topThreeTasks, other: sortedOther };
 }
 
-function renderTopTasks() {
-    if (!currentProject) return;
+function renderGlobalTasks() {
+    const { topThree, other } = getOrderedGlobalTasks();
     
-    const { topThree, other } = getProjectTopTasks();
-    
-    renderTopThreeSection(topThree);
-    renderOtherTasksSection(other);
+    renderTaskSection('topThreeTasks', topThree, true);
+    renderTaskSection('otherTasks', other, false);
 }
 
-function renderTopThreeSection(tasks) {
-    const container = getEl('topTasksRow');
+function renderTaskSection(containerId, tasks, isTopThree) {
+    const container = getEl(containerId);
     if (!container) return;
     
-    console.log('Rendering project-specific top three tasks:', tasks);
+    if (tasks.length === 0) {
+        const message = isTopThree ? 
+            'Drop your most important tasks here' : 
+            'All other tasks appear here';
+        container.innerHTML = `
+            <div class="task-drop-zone" style="
+                border: 2px dashed #d1d5db;
+                border-radius: 8px;
+                padding: 40px;
+                text-align: center;
+                color: #6b7280;
+                background: #f9fafb;
+                margin: 8px 0;
+            ">
+                <div style="font-size: 14px; margin-bottom: 4px;">${message}</div>
+                <div style="font-size: 12px; opacity: 0.7;">Drag tasks here to organize</div>
+            </div>
+        `;
+        container.className = 'task-drop-zone';
+        return;
+    }
     
-    container.innerHTML = '';
-    for (let i = 0; i < 3; i++) {
-        const task = tasks[i];
+    container.className = '';
+    container.innerHTML = tasks.map(task => {
+        const uniqueId = createTaskUniqueId(task.projectId, task.id);
+        const hasSource = task.sourceItemId && task.sourceItemType;
+        const canDiveIn = hasSource && (task.sourceItemType === 'note' || task.sourceItemType === 'copy');
+        
+        // Get link color for the task
+        let linkColor = '#10b981'; // Default green
+        if (hasSource) {
+            const project = projects.find(p => p.id == task.projectId);
+            if (project) {
+                let sourceItem = null;
+                switch(task.sourceItemType) {
+                    case 'brief':
+                        sourceItem = project.briefs?.find(b => b.id === task.sourceItemId);
+                        break;
+                    case 'note':
+                        sourceItem = project.notes?.find(n => n.id === task.sourceItemId);
+                        if (sourceItem?.linkedBriefId) {
+                            const brief = project.briefs?.find(b => b.id === sourceItem.linkedBriefId);
+                            linkColor = brief?.linkColor || linkColor;
+                        }
+                        break;
+                    case 'copy':
+                        sourceItem = project.copy?.find(c => c.id === task.sourceItemId);
+                        if (sourceItem?.linkedBriefId) {
+                            const brief = project.briefs?.find(b => b.id === sourceItem.linkedBriefId);
+                            linkColor = brief?.linkColor || linkColor;
+                        }
+                        break;
+                }
+                if (sourceItem && task.sourceItemType === 'brief') {
+                    linkColor = sourceItem.linkColor || linkColor;
+                }
+            }
+        }
+        
+        return `
+            <div class="global-task-item ${isTopThree ? 'top-three-task' : ''}" 
+                 draggable="true"
+                 data-unique-id="${uniqueId}"
+                 data-project-id="${task.projectId}"
+                 data-task-id="${task.id}"
+                 ondragstart="handleGlobalTaskDragStart(event)"
+                 ondragend="handleGlobalTaskDragEnd(event)"
+                 style="
+                    background: white;
+                    border: 1px solid #e5e5e5;
+                    border-left: 3px solid ${linkColor};
+                    border-radius: 4px;
+                    margin-bottom: 12px;
+                    padding: 0px;
+                    position: relative;
+                    cursor: grab;
+                    transition: all 0.2s ease;
+                    ${task.completed ? 'opacity: 0.6;' : ''}
+                    ${isTopThree ? 'box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);' : ''}
+                 ">
+                
+                <div style="position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; align-items: center;">
+                    <div style="background: #f5f5f5; color: #525252; padding: 2px 6px; border-radius: 2px; font-size: 10px; font-weight: 600; text-transform: uppercase;">
+                        ${isTopThree ? 'Priority' : 'Task'}
+                    </div>
+                    ${!isTopThree ? `
+                        <button onclick="event.stopPropagation(); promoteToTopThree('${task.projectId}', '${task.id}')" 
+                                style="background: #3b82f6; color: white; border: none; padding: 2px 6px; border-radius: 2px; font-size: 10px; cursor: pointer; font-weight: 600;"
+                                title="Add to Top 3">
+                            ★
+                        </button>
+                    ` : `
+                        <button onclick="event.stopPropagation(); removeTaskFromTopThree('${task.projectId}', '${task.id}')" 
+                                style="background: #6b7280; color: white; border: none; padding: 2px 6px; border-radius: 2px; font-size: 10px; cursor: pointer;"
+                                title="Remove from Top 3">
+                            ×
+                        </button>
+                    `}
+                </div>
+                
+                <div style="display: flex; gap: 0px; align-items: flex-start; margin-bottom: 6px; padding: 0px; margin: 0px;">
+                    <div style="background-color: transparent; border: none; margin: 0; margin-left: 39px; margin-top: 5px; padding: 0; flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;">
+                        <input type="checkbox" 
+                               ${task.completed ? 'checked' : ''}
+                               onclick="event.stopPropagation(); toggleGlobalTask('${task.projectId}', '${task.id}')"
+                               style="width: 16px; height: 16px; margin: 0; padding: 0; cursor: pointer;">
+                    </div>
+                    <div style="flex: 1; min-width: 0; margin: 0; padding: 0; padding-left: 8px; padding-right: 80px;">
+                        <div style="font-weight: 600; color: #171717; font-size: 14px; line-height: 1.4; margin: 0; padding: 0; ${task.completed ? 'text-decoration: line-through;' : ''}">${task.title}</div>
+                    </div>
+                </div>
+                
+                <div style="position: absolute; left: 8px; top: 16px;">
+                    <div class="grab-handle"></div>
+                </div>
+                
+                <div style="font-size: 12px; color: #737373; margin-bottom: 8px; padding-left: 63px; padding-right: 80px; ${task.completed ? 'text-decoration: line-through;' : ''}">
+                    <span class="global-task-project project-theme-${task.projectColorTheme || 'blue'}">${task.projectName}</span>
+                    Created: ${formatDate(task.createdAt)}
+                    ${hasSource ? ` • Has source` : ''}
+                    ${task.completed && task.completedAt ? ` • Completed: ${formatDate(task.completedAt)}` : ''}
+                </div>
+                
+                ${task.content ? `
+                    <div style="margin: 6px 0; color: #525252; line-height: 1.4; font-size: 13px; padding-left: 63px; padding-right: 80px; ${task.completed ? 'text-decoration: line-through;' : ''}">
+                        ${truncateContent(task.content)}
+                    </div>
+                ` : ''}
+                
+                <div style="font-size: 11px; color: #a3a3a3; font-style: italic; margin-top: 8px; margin-bottom: 8px; padding-left: 63px; padding-right: 8px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>${hasSource ? 'Click to open source' : 'Click to edit'} • Drag to reorder</span>
+                    <div style="display: flex; gap: 8px;">
+                        <button onclick="event.stopPropagation(); openGlobalTaskSource('${task.projectId}', '${task.id}')" style="background: #171717; color: white; border: none; padding: 2px 6px; border-radius: 2px; font-size: 10px; cursor: pointer;">
+                            ${hasSource ? 'Open' : 'Edit'}
+                        </button>
+                        ${canDiveIn ? `
+                            <span style="background: #fce7f3; color: #be185d; padding: 2px 6px; border-radius: 2px; font-size: 10px; font-weight: 600; text-transform: uppercase; cursor: pointer;" onclick="event.stopPropagation(); diveInToGlobalSource('${task.projectId}', '${task.id}')" title="Open in focus mode with Pomodoro">
+                                Dive In
+                            </span>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function createTaskUniqueId(projectId, taskId) {
+    return `${projectId}-${taskId}`;
+}
+
+function addTaskToTopThree(projectId, taskId) {
+    const uniqueId = createTaskUniqueId(projectId, taskId);
+    
+    // Remove from other if it exists there
+    globalTaskOrder.other = globalTaskOrder.other.filter(id => id !== uniqueId);
+    
+    // Remove from top three if it already exists (avoid duplicates)
+    globalTaskOrder.topThree = globalTaskOrder.topThree.filter(id => id !== uniqueId);
+    
+    // Add to top three (but respect the limit of 3)
+    if (globalTaskOrder.topThree.length >= 3) {
+        // Move the last item from top three to other
+        const lastTopThree = globalTaskOrder.topThree.pop();
+        globalTaskOrder.other.unshift(lastTopThree);
+    }
+    
+    globalTaskOrder.topThree.push(uniqueId);
+    
+    saveGlobalTaskOrder();
+    renderGlobalTasks();
+    showNotification('Task added to Top 3');
+}
+
+function removeTaskFromTopThree(projectId, taskId) {
+    const uniqueId = createTaskUniqueId(projectId, taskId);
+    
+    // Remove from top three
+    globalTaskOrder.topThree = globalTaskOrder.topThree.filter(id => id !== uniqueId);
+    
+    // Add to other tasks (at the beginning)
+    if (!globalTaskOrder.other.includes(uniqueId)) {
+        globalTaskOrder.other.unshift(uniqueId);
+    }
+    
+    saveGlobalTaskOrder();
+    renderGlobalTasks();
+    showNotification('Task removed from Top 3');
+}
+
+function promoteToTopThree(projectId, taskId) {
+    const task = getAllTasks().find(t => 
+        t.projectId == projectId && t.id == taskId && !t.completed
+    );
+    
+    if (!task) {
+        showNotification('Task not found or is completed');
+        return;
+    }
+    
+    addTaskToTopThree(projectId, taskId);
+}
+
+function toggleGlobalTask(projectId, taskId) {
+    const project = projects.find(p => p.id == projectId);
+    if (project) {
+        const task = project.tasks.find(t => t.id == taskId);
         if (task) {
-            container.appendChild(createTopTaskElement(task, i));
-        } else {
-            container.appendChild(createTopTaskDropZone(i));
+            task.completed = !task.completed;
+            // Add completion timestamp when completed
+            if (task.completed) {
+                task.completedAt = getCurrentTimestamp();
+                
+                // Remove completed tasks from priority lists immediately
+                const uniqueId = createTaskUniqueId(projectId, taskId);
+                const wasInTopThree = globalTaskOrder.topThree.includes(uniqueId);
+                const wasInOther = globalTaskOrder.other.includes(uniqueId);
+                
+                globalTaskOrder.topThree = globalTaskOrder.topThree.filter(id => id !== uniqueId);
+                globalTaskOrder.other = globalTaskOrder.other.filter(id => id !== uniqueId);
+                
+                if (wasInTopThree || wasInOther) {
+                    saveGlobalTaskOrder();
+                    console.log('Removed completed task from priority lists:', uniqueId);
+                }
+            } else {
+                delete task.completedAt;
+            }
+            saveProjects();
+            
+            // Force immediate re-render of global tasks
+            setTimeout(() => {
+                renderGlobalTasks();
+            }, 100);
+            
+            // If we're viewing this project, update the local view too
+            if (currentProject && currentProject.id == projectId) {
+                renderProjectTasks();
+            }
         }
     }
 }
 
-function createTopTaskElement(task, position) {
-    const hasSource = task.sourceItemId && task.sourceItemType;
-    const canDiveIn = hasSource && (task.sourceItemType === 'note' || task.sourceItemType === 'copy');
-    let linkColor = '#10b981'; // Default green
+function openGlobalTaskSource(projectId, taskId) {
+    // Switch to the project and open the task source
+    const project = projects.find(p => p.id == projectId);
+    if (!project) return;
     
-    // Get link color for the task
-    if (hasSource) {
-        let sourceItem = null;
-        switch(task.sourceItemType) {
-            case 'brief':
-                sourceItem = currentProject.briefs?.find(b => b.id === task.sourceItemId);
-                break;
-            case 'note':
-                sourceItem = currentProject.notes?.find(n => n.id === task.sourceItemId);
-                if (sourceItem?.linkedBriefId) {
-                    const brief = currentProject.briefs?.find(b => b.id === sourceItem.linkedBriefId);
-                    linkColor = brief?.linkColor || linkColor;
-                }
-                break;
-            case 'copy':
-                sourceItem = currentProject.copy?.find(c => c.id === task.sourceItemId);
-                if (sourceItem?.linkedBriefId) {
-                    const brief = currentProject.briefs?.find(b => b.id === sourceItem.linkedBriefId);
-                    linkColor = brief?.linkColor || linkColor;
-                }
-                break;
-        }
-        if (sourceItem && task.sourceItemType === 'brief') {
-            linkColor = sourceItem.linkColor || linkColor;
-        }
+    const task = project.tasks.find(t => t.id == taskId);
+    if (!task) return;
+    
+    // Switch to the project
+    currentProject = project;
+    setValue('projectSelect', project.id);
+    setDisplay('dashboard', 'grid');
+    setDisplay('projectOverview', 'none');
+    
+    // Apply project color theme
+    const dashboard = getEl('dashboard');
+    colorThemes.forEach(theme => {
+        dashboard.classList.remove(`project-theme-${theme}`);
+    });
+    if (project.colorTheme) {
+        dashboard.classList.add(`project-theme-${project.colorTheme}`);
     }
+    dashboard.classList.add('project-themed');
     
-    const taskElement = document.createElement('div');
-    taskElement.className = 'top-task-item';
-    taskElement.draggable = true;
-    taskElement.style.borderLeftColor = linkColor;
+    renderProject();
     
-    // Add data attributes for drag and drop
-    taskElement.setAttribute('data-task-id', task.id);
-    taskElement.setAttribute('data-position', position);
-    
-    // Add event listeners
-    taskElement.addEventListener('dragstart', handleTopTaskDragStart);
-    taskElement.addEventListener('dragend', handleTopTaskDragEnd);
-    taskElement.addEventListener('click', () => {
-        if (hasSource) {
-            openTaskSource(task.id);
+    // Open the appropriate editor after a delay
+    setTimeout(() => {
+        if (task.sourceItemId && task.sourceItemType) {
+            openTaskSource(taskId);
         } else {
             openItemEditor(task, 'task');
         }
+    }, 200);
+}
+
+function diveInToGlobalSource(projectId, taskId) {
+    // Similar to openGlobalTaskSource but with dive-in functionality
+    const project = projects.find(p => p.id == projectId);
+    if (!project) return;
+    
+    const task = project.tasks.find(t => t.id == taskId);
+    if (!task) return;
+    
+    // Only proceed if the source is a note or copy
+    if (!task.sourceItemId || !task.sourceItemType || (task.sourceItemType !== 'note' && task.sourceItemType !== 'copy')) {
+        showNotification('Dive In is only available for tasks created from notes or copy');
+        return;
+    }
+    
+    // Switch to the project
+    currentProject = project;
+    setValue('projectSelect', project.id);
+    setDisplay('dashboard', 'grid');
+    setDisplay('projectOverview', 'none');
+    
+    // Apply project color theme
+    const dashboard = getEl('dashboard');
+    colorThemes.forEach(theme => {
+        dashboard.classList.remove(`project-theme-${theme}`);
     });
+    if (project.colorTheme) {
+        dashboard.classList.add(`project-theme-${project.colorTheme}`);
+    }
+    dashboard.classList.add('project-themed');
     
-    // Create content
-    taskElement.innerHTML = `
-        <div class="task-title">${task.title}</div>
-        <div class="task-meta">
-            <span style="background: #f5f5f5; color: #525252; padding: 1px 4px; border-radius: 2px; font-size: 9px; font-weight: 600; text-transform: uppercase; margin-right: 6px;">Task</span>
-            ${hasSource ? 'Has source • ' : ''}Created: ${formatDate(task.createdAt)}
-            ${canDiveIn ? ` • <span style="background: #fce7f3; color: #be185d; padding: 1px 4px; border-radius: 2px; font-size: 9px; font-weight: 600; text-transform: uppercase; cursor: pointer;" onclick="event.stopPropagation(); diveInToTopTaskSource('${task.id}')" title="Open in focus mode with Pomodoro">Dive In</span>` : ''}
-        </div>
-        <input type="checkbox" 
-               class="task-checkbox"
-               ${task.completed ? 'checked' : ''}
-               onclick="event.stopPropagation(); toggleTopTask('${task.id}')">
-        <button class="remove-from-top" onclick="event.stopPropagation(); removeFromTopThree('${task.id}')" title="Remove from top 3">×</button>
-    `;
+    renderProject();
     
-    return taskElement;
+    // Find the source item and dive in
+    setTimeout(() => {
+        let sourceItem = null;
+        switch(task.sourceItemType) {
+            case 'note':
+                sourceItem = project.notes.find(n => n.id === task.sourceItemId);
+                break;
+            case 'copy':
+                sourceItem = project.copy.find(c => c.id === task.sourceItemId);
+                break;
+        }
+        
+        if (sourceItem) {
+            // Open the item editor
+            openItemEditor(sourceItem, task.sourceItemType);
+            
+            // Wait for editor to be ready, then enter focus mode and start pomodoro
+            setTimeout(() => {
+                // Reset pomodoro to work session if it's currently a break
+                if (pomodoroIsBreak) {
+                    pomodoroIsBreak = false;
+                    pomodoroTimeLeft = 25 * 60;
+                    document.querySelector('.pomodoro-timer').className = 'pomodoro-timer';
+                    updatePomodoroDisplay();
+                    updatePomodoroStatus();
+                }
+                
+                // Start the pomodoro and enter focus mode
+                if (!pomodoroIsRunning) {
+                    startPomodoro();
+                }
+                
+                showNotification(`Diving into "${sourceItem.title}" - Focus mode activated!`);
+            }, 300);
+        } else {
+            showNotification('Source item not found');
+        }
+    }, 200);
 }
 
-function createTopTaskDropZone(position) {
-    const dropZone = document.createElement('div');
-    dropZone.className = 'top-tasks-drop-zone';
-    dropZone.setAttribute('data-position', position);
-    
-    dropZone.innerHTML = `
-        <div class="drop-zone-content">
-            <div class="drop-zone-icon">+</div>
-            <div class="drop-zone-text">Drop item here</div>
-        </div>
-    `;
-    
-    // Add drag and drop event listeners
-    dropZone.addEventListener('dragover', handleTopTaskDragOver);
-    dropZone.addEventListener('dragleave', handleTopTaskDragLeave);
-    dropZone.addEventListener('drop', (e) => handleTopTaskDrop(e, position));
-    
-    return dropZone;
-}
-
-// Top task drag and drop handlers
-function handleTopTaskDragStart(event) {
+// Global task drag and drop handlers
+function handleGlobalTaskDragStart(event) {
     const taskElement = event.currentTarget;
+    const uniqueId = taskElement.getAttribute('data-unique-id');
+    const projectId = taskElement.getAttribute('data-project-id');
     const taskId = taskElement.getAttribute('data-task-id');
-    const position = parseInt(taskElement.getAttribute('data-position'));
     
-    draggedTopTask = { taskId, sourcePosition: position, type: 'task' };
+    draggedGlobalTask = { uniqueId, projectId, taskId };
     taskElement.classList.add('dragging');
-    taskElement.style.opacity = '0.5';
     
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', '');
 }
 
-function handleTopTaskDragEnd(event) {
+function handleGlobalTaskDragEnd(event) {
     event.currentTarget.classList.remove('dragging');
-    event.currentTarget.style.opacity = '1';
-    draggedTopTask = null;
+    draggedGlobalTask = null;
 }
 
-function handleTopTaskDragOver(event) {
+function setupTopTasksDropZones() {
+    const topThreeContainer = getEl('topThreeTasks');
+    const otherTasksContainer = getEl('otherTasks');
+    
+    if (topThreeContainer) {
+        topThreeContainer.addEventListener('dragover', handleTaskDragOver);
+        topThreeContainer.addEventListener('dragleave', handleTaskDragLeave);
+        topThreeContainer.addEventListener('drop', (e) => handleTaskDrop(e, 'top-three'));
+    }
+    
+    if (otherTasksContainer) {
+        otherTasksContainer.addEventListener('dragover', handleTaskDragOver);
+        otherTasksContainer.addEventListener('dragleave', handleTaskDragLeave);
+        otherTasksContainer.addEventListener('drop', (e) => handleTaskDrop(e, 'other'));
+    }
+}
+
+function handleTaskDragOver(event) {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
     
     if (!event.currentTarget.classList.contains('drag-over')) {
         event.currentTarget.classList.add('drag-over');
-        event.currentTarget.style.background = '#e0f2fe';
-        event.currentTarget.style.borderColor = '#0ea5e9';
     }
 }
 
-function handleTopTaskDragLeave(event) {
+function handleTaskDragLeave(event) {
     if (!event.currentTarget.contains(event.relatedTarget)) {
         event.currentTarget.classList.remove('drag-over');
-        event.currentTarget.style.background = '#fafafa';
-        event.currentTarget.style.borderColor = '#d4d4d4';
     }
 }
 
-function handleTopTaskDrop(event, targetPosition) {
+function handleTaskDrop(event, targetSection) {
     event.preventDefault();
     event.currentTarget.classList.remove('drag-over');
-    event.currentTarget.style.background = '#fafafa';
-    event.currentTarget.style.borderColor = '#d4d4d4';
     
-    // Handle different types of dragged items
-    if (draggedTopTask && draggedTopTask.type === 'task') {
-        // Moving existing task within top three
-        moveTaskWithinTopThree(draggedTopTask.taskId, targetPosition);
-    } else if (draggedItem && draggedItemType) {
-        // Creating task from brief/note/copy
-        createTaskFromItemDrop(draggedItem, draggedItemType, targetPosition);
-    }
-}
-
-function moveTaskWithinTopThree(taskId, targetPosition) {
-    if (!currentProject.topTaskIds) {
-        currentProject.topTaskIds = [];
-    }
+    if (!draggedGlobalTask) return;
     
-    // Remove task from current position
-    const currentIndex = currentProject.topTaskIds.indexOf(taskId);
-    if (currentIndex !== -1) {
-        currentProject.topTaskIds.splice(currentIndex, 1);
-    }
+    const { uniqueId } = draggedGlobalTask;
     
-    // Insert at target position
-    currentProject.topTaskIds.splice(targetPosition, 0, taskId);
+    // Remove task from both arrays
+    globalTaskOrder.topThree = globalTaskOrder.topThree.filter(id => id !== uniqueId);
+    globalTaskOrder.other = globalTaskOrder.other.filter(id => id !== uniqueId);
     
-    // Ensure only 3 items maximum
-    if (currentProject.topTaskIds.length > 3) {
-        currentProject.topTaskIds = currentProject.topTaskIds.slice(0, 3);
-    }
-    
-    saveProjects();
-    renderTopTasks();
-    showNotification(`Task moved to position ${targetPosition + 1} in top 3`);
-}
-
-function createTaskFromItemDrop(sourceItem, sourceType, targetPosition) {
-    if (!currentProject) return;
-    
-    // Create new task from the dropped item
-    const newTask = {
-        id: generateId(),
-        title: sourceItem.title,
-        content: sourceItem.content || '',
-        type: 'task',
-        completed: false,
-        sourceItemId: sourceItem.id,
-        sourceItemType: sourceType,
-        order: 0,
-        createdAt: getCurrentTimestamp()
-    };
-    
-    // Add task to project
-    currentProject.tasks.unshift(newTask);
-    
-    // Initialize topTaskIds if needed
-    if (!currentProject.topTaskIds) {
-        currentProject.topTaskIds = [];
-    }
-    
-    // If dropping in position 0, 1, or 2 - add to top three
-    if (targetPosition < 3) {
-        // Displace existing tasks if necessary
-        if (currentProject.topTaskIds.length >= 3) {
-            // Remove tasks beyond position to make room
-            currentProject.topTaskIds = currentProject.topTaskIds.slice(0, targetPosition)
-                .concat(currentProject.topTaskIds.slice(targetPosition + 1));
+    // Add to appropriate array
+    if (targetSection === 'top-three') {
+        // Only allow 3 items in top three
+        if (globalTaskOrder.topThree.length >= 3) {
+            // Move the last item from top three to other
+            const lastTopThree = globalTaskOrder.topThree.pop();
+            globalTaskOrder.other.unshift(lastTopThree);
         }
-        
-        // Insert new task at target position
-        currentProject.topTaskIds.splice(targetPosition, 0, newTask.id);
-        
-        // Ensure only 3 items maximum
-        if (currentProject.topTaskIds.length > 3) {
-            currentProject.topTaskIds = currentProject.topTaskIds.slice(0, 3);
-        }
-        
-        showNotification(`Created task "${newTask.title}" in top 3 position ${targetPosition + 1}`);
+        globalTaskOrder.topThree.push(uniqueId);
     } else {
-        // Add to regular tasks list (already done above)
-        showNotification(`Created task "${newTask.title}" and added to tasks list`);
+        globalTaskOrder.other.push(uniqueId);
     }
     
-    saveProjects();
-    renderTopTasks();
-    renderProjectTasks();
+    saveGlobalTaskOrder();
+    renderGlobalTasks();
+    showNotification(`Task moved to ${targetSection === 'top-three' ? 'Top 3' : 'Other Tasks'}`);
 }
 
-// Handle drops to the right of the top three (beyond position 2)
-function setupTopTasksContainer() {
-    const container = getEl('topTasksRow');
-    if (!container) return;
-    
-    // Add container-level drop handling for items dropped to the right
-    container.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-    });
-    
-    container.addEventListener('drop', (e) => {
-        // Check if dropped to the right of existing tasks
-        const rect = container.getBoundingClientRect();
-        const dropX = e.clientX - rect.left;
-        const containerWidth = rect.width;
-        
-        // If dropped in the rightmost third, treat as "add to general tasks"
-        if (dropX > containerWidth * 0.75 && draggedItem && draggedItemType) {
-            e.preventDefault();
-            createTaskFromItemDrop(draggedItem, draggedItemType, 999); // Use high number to indicate "general tasks"
-        }
-    });
+function saveGlobalTaskOrder() {
+    saveToStorage('globalTaskOrder', globalTaskOrder);
 }
 
-// Helper functions
-function addTaskToTopThree(taskId) {
-    if (!currentProject) return;
-    
-    if (!currentProject.topTaskIds) {
-        currentProject.topTaskIds = [];
-    }
-    
-    // Remove if already exists
-    const existingIndex = currentProject.topTaskIds.indexOf(taskId);
-    if (existingIndex !== -1) {
-        currentProject.topTaskIds.splice(existingIndex, 1);
-    }
-    
-    // Add to top three (displace if necessary)
-    if (currentProject.topTaskIds.length >= 3) {
-        currentProject.topTaskIds.pop(); // Remove last item
-    }
-    
-    currentProject.topTaskIds.unshift(taskId);
-    
-    saveProjects();
-    renderTopTasks();
-    showNotification('Task added to top 3');
-}
-
-function removeFromTopThree(taskId) {
-    if (!currentProject || !currentProject.topTaskIds) return;
-    
-    const index = currentProject.topTaskIds.indexOf(taskId);
-    if (index !== -1) {
-        currentProject.topTaskIds.splice(index, 1);
-        saveProjects();
-        renderTopTasks();
-        showNotification('Task removed from top 3');
+function loadGlobalTaskOrder() {
+    const saved = loadFromStorage('globalTaskOrder');
+    if (saved) {
+        globalTaskOrder = { topThree: [], other: [], ...saved };
     }
 }
 
-function toggleTopTask(taskId) {
-    if (!currentProject) return;
+function cleanupGlobalTaskOrder() {
+    // Remove any task references that no longer exist
+    const allTasks = getAllTasks();
+    const validTaskIds = new Set(allTasks.map(task => createTaskUniqueId(task.projectId, task.id)));
     
-    const task = currentProject.tasks.find(t => t.id == taskId);
-    if (task) {
-        task.completed = !task.completed;
-        
-        if (task.completed) {
-            task.completedAt = getCurrentTimestamp();
-            // Remove completed tasks from top three
-            removeFromTopThree(taskId);
-        } else {
-            delete task.completedAt;
-        }
-        
-        saveProjects();
-        renderTopTasks();
-        renderProjectTasks();
-    }
+    globalTaskOrder.topThree = globalTaskOrder.topThree.filter(id => validTaskIds.has(id));
+    globalTaskOrder.other = globalTaskOrder.other.filter(id => validTaskIds.has(id));
+    
+    saveGlobalTaskOrder();
 }
 
-function diveInToTopTaskSource(taskId) {
-    const task = currentProject.tasks.find(t => t.id == taskId);
-    if (!task) return;
-    
-    // Only proceed if the source is a note or copy
-    if (!task.sourceItemId || !task.sourceItemType || 
-        (task.sourceItemType !== 'note' && task.sourceItemType !== 'copy')) {
-        showNotification('Dive In is only available for tasks created from notes or copy');
-        return;
-    }
-    
-    // Find the source item
-    let sourceItem = null;
-    switch(task.sourceItemType) {
-        case 'note':
-            sourceItem = currentProject.notes.find(n => n.id === task.sourceItemId);
-            break;
-        case 'copy':
-            sourceItem = currentProject.copy.find(c => c.id === task.sourceItemId);
-            break;
-    }
-    
-    if (sourceItem) {
-        openItemEditor(sourceItem, task.sourceItemType);
-        
-        setTimeout(() => {
-            if (pomodoroIsBreak) {
-                pomodoroIsBreak = false;
-                pomodoroTimeLeft = 25 * 60;
-                updatePomodoroDisplay();
-                updatePomodoroStatus();
-            }
-            
-            if (!pomodoroIsRunning) {
-                startPomodoro();
-            }
-            
-            showNotification(`Diving into "${sourceItem.title}" - Focus mode activated!`);
-        }, 300);
-    } else {
-        showNotification('Source item not found');
-    }
-}
-
-// Initialize project-specific top tasks
-function initializeProjectTopTasks() {
-    if (!currentProject) return;
-    
-    // Auto-populate if empty
-    if (!currentProject.topTaskIds || currentProject.topTaskIds.length === 0) {
-        const incompleteTasks = (currentProject.tasks || []).filter(task => !task.completed);
+function autoPopulateTopThree() {
+    if (globalTaskOrder.topThree.length === 0) {
+        const allTasks = getAllTasks().filter(task => !task.completed);
         
         // Sort by creation date (most recent first)
-        incompleteTasks.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        allTasks.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
         
         // Take up to 3 most recent tasks
-        const tasksToAdd = incompleteTasks.slice(0, 3);
+        const tasksToAdd = allTasks.slice(0, 3);
         
-        currentProject.topTaskIds = tasksToAdd.map(task => task.id);
+        tasksToAdd.forEach(task => {
+            const uniqueId = createTaskUniqueId(task.projectId, task.id);
+            globalTaskOrder.topThree.push(uniqueId);
+        });
+        
+        saveGlobalTaskOrder();
         
         if (tasksToAdd.length > 0) {
-            console.log(`Auto-populated top 3 with ${tasksToAdd.length} recent tasks for project ${currentProject.name}`);
-            saveProjects();
+            console.log(`Auto-populated top 3 with ${tasksToAdd.length} recent tasks`);
         }
     }
-    
-    setupTopTasksContainer();
-    renderTopTasks();
-}
-
-function sortTasksWithCompletedAtBottom(tasks) {
-    return [...tasks].sort((a, b) => {
-        // First sort by completion status (incomplete first)
-        if (a.completed !== b.completed) {
-            return a.completed ? 1 : -1;
-        }
-        
-        // Within each group, sort by order or creation date
-        const aOrder = a.order !== undefined ? a.order : 0;
-        const bOrder = b.order !== undefined ? b.order : 0;
-        
-        if (aOrder !== bOrder) {
-            return aOrder - bOrder;
-        }
-        
-        // Fallback to creation date
-        return new Date(a.createdAt) - new Date(b.createdAt);
-    });
 }
 
 function cleanupOldCompletedTasks() {
@@ -646,9 +737,283 @@ function cleanupOldCompletedTasks() {
     
     if (hasChanges) {
         saveProjects();
+        // Clean up global task order references for deleted tasks
+        cleanupGlobalTaskOrder();
         console.log('Cleaned up old completed tasks');
     }
 }
+
+function sortTasksWithCompletedAtBottom(tasks) {
+    return [...tasks].sort((a, b) => {
+        // First sort by completion status (incomplete first)
+        if (a.completed !== b.completed) {
+            return a.completed ? 1 : -1;
+        }
+        
+        // Within each group, sort by order or creation date
+        const aOrder = a.order !== undefined ? a.order : 0;
+        const bOrder = b.order !== undefined ? b.order : 0;
+        
+        if (aOrder !== bOrder) {
+            return aOrder - bOrder;
+        }
+        
+        // Fallback to creation date
+        return new Date(a.createdAt) - new Date(b.createdAt);
+    });
+}
+
+// ===== DOCUMENT UPLOAD AND PROCESSING =====
+
+function setupDocumentUpload() {
+    const briefFields = getEl('briefFields');
+    if (!briefFields) return;
+    
+    // Add drag and drop zone to client brief area
+    const clientBriefField = getEl('editorClientBrief');
+    if (!clientBriefField) return;
+    
+    // Create upload zone
+    const uploadZone = document.createElement('div');
+    uploadZone.className = 'document-upload-zone';
+    uploadZone.style.cssText = `
+        border: 2px dashed #d1d5db;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 10px;
+        text-align: center;
+        color: #6b7280;
+        background: #f9fafb;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    `;
+    
+    uploadZone.innerHTML = `
+        <div style="font-size: 14px; margin-bottom: 4px;">📄 Drop Word document here</div>
+        <div style="font-size: 12px; opacity: 0.7;">Or click to browse files (.docx)</div>
+        <input type="file" accept=".docx" style="display: none;" id="docxFileInput">
+    `;
+    
+    // Insert upload zone before client brief field
+    clientBriefField.parentNode.insertBefore(uploadZone, clientBriefField);
+    
+    const fileInput = getEl('docxFileInput');
+    
+    // Handle click to browse
+    uploadZone.addEventListener('click', () => {
+        fileInput.click();
+    });
+    
+    // Handle file selection
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            processWordDocument(file);
+        }
+    });
+    
+    // Handle drag and drop
+    uploadZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadZone.style.borderColor = '#3b82f6';
+        uploadZone.style.background = '#eff6ff';
+    });
+    
+    uploadZone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        uploadZone.style.borderColor = '#d1d5db';
+        uploadZone.style.background = '#f9fafb';
+    });
+    
+    uploadZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadZone.style.borderColor = '#d1d5db';
+        uploadZone.style.background = '#f9fafb';
+        
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            const file = files[0];
+            if (file.name.endsWith('.docx')) {
+                processWordDocument(file);
+            } else {
+                showNotification('Please select a .docx file');
+            }
+        }
+    });
+}
+
+async function processWordDocument(file) {
+    try {
+        showNotification('Processing document...');
+        
+        // Read file as array buffer
+        const arrayBuffer = await file.arrayBuffer();
+        
+        // Use mammoth to extract text with basic formatting
+        const result = await mammoth.extractRawText(arrayBuffer);
+        
+        if (result.value) {
+            // Insert extracted text into client brief field
+            const clientBriefField = getEl('editorClientBrief');
+            if (clientBriefField) {
+                clientBriefField.value = result.value;
+                
+                // Trigger autosave
+                debouncedAutosave();
+                
+                showNotification('Document imported successfully!');
+            }
+        } else {
+            showNotification('No text content found in document');
+        }
+        
+        if (result.messages && result.messages.length > 0) {
+            console.log('Document processing messages:', result.messages);
+        }
+        
+    } catch (error) {
+        console.error('Error processing document:', error);
+        showNotification('Error processing document. Please try again.');
+    }
+}
+
+// ===== BREADCRUMB IMPROVEMENTS =====
+
+// Fixed breadcrumb management to limit screen width
+function addToBreadcrumbs(projectId, itemId, itemType, title) {
+    const breadcrumbId = `${projectId}-${itemId}-${itemType}`;
+    
+    // Remove if already exists to avoid duplicates
+    workContext.breadcrumbs = workContext.breadcrumbs.filter(b => b.id !== breadcrumbId);
+    
+    // Add to end
+    workContext.breadcrumbs.push({
+        id: breadcrumbId,
+        projectId: projectId,
+        itemId: itemId,
+        itemType: itemType,
+        title: title,
+        timestamp: Date.now()
+    });
+    
+    // Calculate maximum breadcrumbs that fit on screen
+    const maxBreadcrumbs = calculateMaxBreadcrumbs();
+    
+    // Keep only the most recent items that fit
+    if (workContext.breadcrumbs.length > maxBreadcrumbs) {
+        workContext.breadcrumbs = workContext.breadcrumbs.slice(-maxBreadcrumbs);
+    }
+    
+    saveBreadcrumbs();
+    renderBreadcrumbs();
+}
+
+function calculateMaxBreadcrumbs() {
+    // Estimate breadcrumb width and calculate how many fit
+    const container = getEl('breadcrumbContainer');
+    if (!container) return 5; // Default fallback
+    
+    const containerWidth = container.offsetWidth || 800; // Fallback width
+    const clearButtonWidth = 60; // Approximate width of clear button
+    const separatorWidth = 20; // Width of separator
+    const averageBreadcrumbWidth = 120; // Average breadcrumb item width
+    
+    const availableWidth = containerWidth - clearButtonWidth - 40; // 40px for margins
+    const maxItems = Math.floor(availableWidth / (averageBreadcrumbWidth + separatorWidth));
+    
+    return Math.max(3, Math.min(maxItems, 8)); // Between 3 and 8 items
+}
+
+function renderBreadcrumbs() {
+    const container = getEl('breadcrumbContainer');
+    const trail = getEl('breadcrumbTrail');
+    
+    if (!container || !trail) return;
+    
+    if (workContext.breadcrumbs.length === 0) {
+        setDisplay('breadcrumbContainer', 'none');
+        return;
+    }
+    
+    setDisplay('breadcrumbContainer', 'block');
+    
+    const breadcrumbsHtml = workContext.breadcrumbs.map((breadcrumb, index) => {
+        const isLast = index === workContext.breadcrumbs.length - 1;
+        const project = projects.find(p => p.id == breadcrumb.projectId);
+        const projectName = project ? project.name : 'Unknown Project';
+        
+        return `
+            <div class="breadcrumb-item ${isLast ? 'current' : ''}" 
+                 onclick="navigateToBreadcrumb('${breadcrumb.id}')"
+                 title="${projectName} > ${breadcrumb.title}"
+                 style="
+                    padding: 4px 8px;
+                    background: ${isLast ? '#f3f4f6' : 'white'};
+                    border: 1px solid #e5e7eb;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    white-space: nowrap;
+                    max-width: 120px;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    font-size: 12px;
+                 ">
+                <span style="color: #a3a3a3; font-size: 10px; text-transform: uppercase;">${breadcrumb.itemType}</span>
+                <span style="display: block; font-weight: ${isLast ? '600' : '400'};">${breadcrumb.title}</span>
+            </div>
+            ${!isLast ? '<div class="breadcrumb-separator" style="color: #9ca3af; font-size: 12px; padding: 0 4px;">›</div>' : ''}
+        `;
+    }).join('');
+    
+    setHTML('breadcrumbTrail', `
+        <div style="display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; overflow: hidden;">
+            ${breadcrumbsHtml}
+            <button class="breadcrumb-clear" onclick="clearBreadcrumbs()" 
+                    style="
+                        background: #ef4444;
+                        color: white;
+                        border: none;
+                        padding: 4px 8px;
+                        border-radius: 4px;
+                        font-size: 10px;
+                        cursor: pointer;
+                        margin-left: 8px;
+                        flex-shrink: 0;
+                    " title="Clear trail">
+                Clear
+            </button>
+        </div>
+    `);
+}
+
+function navigateToBreadcrumb(breadcrumbId) {
+    const breadcrumb = workContext.breadcrumbs.find(b => b.id === breadcrumbId);
+    if (!breadcrumb) return;
+    
+    // Switch to project if needed
+    const project = projects.find(p => p.id == breadcrumb.projectId);
+    if (!project) return;
+    
+    if (!currentProject || currentProject.id != breadcrumb.projectId) {
+        // Switch project and then open item
+        switchToProject(breadcrumb.projectId, () => {
+            setTimeout(() => {
+                openItemWithContext(breadcrumb.itemId, breadcrumb.itemType);
+            }, 200);
+        });
+    } else {
+        // Same project, just open item
+        openItemWithContext(breadcrumb.itemId, breadcrumb.itemType);
+    }
+}
+
+function clearBreadcrumbs() {
+    workContext.breadcrumbs = [];
+    saveBreadcrumbs();
+    renderBreadcrumbs();
+}
+
+// ===== CONFIRMATION AND DELETE FUNCTIONS =====
 
 function showConfirm(title, message, callback, data = null) {
     console.log('Showing custom confirmation:', title, message);
@@ -731,7 +1096,7 @@ function deleteBrief(briefId) {
             renderNotes();
             renderCopy();
             renderProjectTasks();
-            renderTopTasks();
+            renderGlobalTasks();
             console.log('Brief deleted successfully, linked items preserved');
             
             showNotification('Brief deleted. Linked notes and copy preserved but unlinked.');
@@ -772,7 +1137,7 @@ function deleteNote(noteId) {
             saveProjects();
             renderNotes();
             renderProjectTasks();
-            renderTopTasks();
+            renderGlobalTasks();
             console.log('Note deleted successfully');
             
             showNotification('Note and linked tasks deleted successfully');
@@ -806,7 +1171,7 @@ function deleteCopy(copyId) {
             saveProjects();
             renderCopy();
             renderProjectTasks();
-            renderTopTasks();
+            renderGlobalTasks();
             console.log('Copy deleted successfully');
             
             showNotification('Copy and linked tasks deleted successfully');
@@ -830,13 +1195,8 @@ function removeLinkedTasks(sourceType, sourceId) {
         }
     });
     
-    // Clean up project top task references
-    projects.forEach(project => {
-        if (project.topTaskIds && Array.isArray(project.topTaskIds)) {
-            const validTaskIds = (project.tasks || []).map(task => task.id);
-            project.topTaskIds = project.topTaskIds.filter(taskId => validTaskIds.includes(taskId));
-        }
-    });
+    // Clean up global task order
+    cleanupGlobalTaskOrder();
 }
 
 function removeFromBreadcrumbs(itemType, itemId) {
@@ -848,7 +1208,8 @@ function removeFromBreadcrumbs(itemType, itemId) {
     console.log('Removed item from breadcrumbs:', breadcrumbId);
 }
 
-// FIXED: Simplified drag and drop functions
+// ===== DRAG AND DROP FUNCTIONS =====
+
 function handleDragStart(event) {
     const itemElement = event.currentTarget;
     const itemData = JSON.parse(itemElement.getAttribute('data-item'));
@@ -1262,7 +1623,6 @@ function createItemFromDrop(sourceItem, sourceType, targetType) {
         
         currentProject.tasks.unshift(newItem);
         renderProjectTasks();
-        renderTopTasks(); // Update top tasks display
         showNotification(`Created task "${newItem.title}" from ${sourceType}`);
     } else if (sourceType === 'brief' && (targetType === 'note' || targetType === 'copy')) {
         // Brief dropped on note/copy creates linked item
@@ -1357,57 +1717,8 @@ function createItemFromDrop(sourceItem, sourceType, targetType) {
     saveProjects();
 }
 
-// Updated drag and drop setup to handle briefs/notes/copy being dropped into top tasks
-function setupHorizontalTasksDropZones() {
-    const container = getEl('topTasksRow');
-    if (!container) return;
-    
-    // Allow dropping any item type onto the top tasks area
-    container.addEventListener('dragover', (e) => {
-        if (draggedItem && (draggedItemType === 'task' || draggedItemType === 'brief' || 
-            draggedItemType === 'note' || draggedItemType === 'copy')) {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
-        }
-    });
-    
-    container.addEventListener('drop', (e) => {
-        if (draggedItem && currentProject) {
-            e.preventDefault();
-            
-            if (draggedItemType === 'task') {
-                // Add existing task to top three
-                addTaskToTopThree(draggedItem.id);
-            } else {
-                // Create task from brief/note/copy and add to general tasks
-                const newTask = {
-                    id: generateId(),
-                    title: draggedItem.title,
-                    content: draggedItem.content || '',
-                    type: 'task',
-                    completed: false,
-                    sourceItemId: draggedItem.id,
-                    sourceItemType: draggedItemType,
-                    order: 0,
-                    createdAt: getCurrentTimestamp()
-                };
-                
-                currentProject.tasks.unshift(newTask);
-                saveProjects();
-                renderTopTasks();
-                renderProjectTasks();
-                
-                showNotification(`Created task "${newTask.title}" from ${draggedItemType}`);
-            }
-            
-            // Clear drag state
-            draggedItem = null;
-            draggedItemType = null;
-        }
-    });
-}
+// ===== CONTEXT PRESERVATION SYSTEM =====
 
-// Context Preservation System
 function createContextState(projectId, itemId, itemType) {
     return {
         projectId: projectId,
@@ -1421,94 +1732,39 @@ function createContextState(projectId, itemId, itemType) {
     };
 }
 
-// Breadcrumb management
-function addToBreadcrumbs(projectId, itemId, itemType, title) {
-    const breadcrumbId = `${projectId}-${itemId}-${itemType}`;
-    
-    // Remove if already exists to avoid duplicates
-    workContext.breadcrumbs = workContext.breadcrumbs.filter(b => b.id !== breadcrumbId);
-    
-    // Add to end
-    workContext.breadcrumbs.push({
-        id: breadcrumbId,
-        projectId: projectId,
-        itemId: itemId,
-        itemType: itemType,
-        title: title,
-        timestamp: Date.now()
-    });
-    
-    // Keep only last 10 items
-    if (workContext.breadcrumbs.length > 10) {
-        workContext.breadcrumbs = workContext.breadcrumbs.slice(-10);
+function openItemWithContext(itemId, itemType) {
+    const item = findItem(itemId, itemType);
+    if (item) {
+        openItemEditor(item, itemType);
+        addToBreadcrumbs(currentProject.id, itemId, itemType, item.title);
     }
-    
-    saveBreadcrumbs();
-    renderBreadcrumbs();
 }
 
-function navigateToBreadcrumb(breadcrumbId) {
-    const breadcrumb = workContext.breadcrumbs.find(b => b.id === breadcrumbId);
-    if (!breadcrumb) return;
-    
-    // Switch to project if needed
-    const project = projects.find(p => p.id == breadcrumb.projectId);
+function switchToProject(projectId, callback) {
+    const project = projects.find(p => p.id == projectId);
     if (!project) return;
     
-    if (!currentProject || currentProject.id != breadcrumb.projectId) {
-        // Switch project and then open item
-        switchToProject(breadcrumb.projectId, () => {
-            setTimeout(() => {
-                openItemWithContext(breadcrumb.itemId, breadcrumb.itemType);
-            }, 200);
-        });
-    } else {
-        // Same project, just open item
-        openItemWithContext(breadcrumb.itemId, breadcrumb.itemType);
+    currentProject = project;
+    setValue('projectSelect', project.id);
+    setDisplay('dashboard', 'grid');
+    setDisplay('projectOverview', 'none');
+    
+    // Apply project color theme
+    const dashboard = getEl('dashboard');
+    colorThemes.forEach(theme => {
+        dashboard.classList.remove(`project-theme-${theme}`);
+    });
+    if (project.colorTheme) {
+        dashboard.classList.add(`project-theme-${project.colorTheme}`);
     }
+    dashboard.classList.add('project-themed');
+    
+    updateSettingsButton();
+    renderProject();
+    
+    if (callback) callback();
 }
 
-function clearBreadcrumbs() {
-    workContext.breadcrumbs = [];
-    saveBreadcrumbs();
-    renderBreadcrumbs();
-}
-
-function renderBreadcrumbs() {
-    const container = getEl('breadcrumbContainer');
-    const trail = getEl('breadcrumbTrail');
-    
-    if (workContext.breadcrumbs.length === 0) {
-        setDisplay('breadcrumbContainer', 'none');
-        return;
-    }
-    
-    setDisplay('breadcrumbContainer', 'block');
-    
-    const breadcrumbsHtml = workContext.breadcrumbs.map((breadcrumb, index) => {
-        const isLast = index === workContext.breadcrumbs.length - 1;
-        const project = projects.find(p => p.id == breadcrumb.projectId);
-        const projectName = project ? project.name : 'Unknown Project';
-        
-        return `
-            <div class="breadcrumb-item ${isLast ? 'current' : ''}" 
-                 onclick="navigateToBreadcrumb('${breadcrumb.id}')"
-                 title="${projectName} > ${breadcrumb.title}">
-                <span style="color: #a3a3a3; font-size: 10px;">${breadcrumb.itemType.toUpperCase()}</span>
-                <span>${breadcrumb.title}</span>
-            </div>
-            ${!isLast ? '<div class="breadcrumb-separator">></div>' : ''}
-        `;
-    }).join('');
-    
-    setHTML('breadcrumbTrail', breadcrumbsHtml + `
-        <button class="breadcrumb-clear" onclick="clearBreadcrumbs()" title="Clear trail">
-            Clear
-        </button>
-    `);
-}
-
-// Context state management
 function saveCurrentContext() {
     if (!currentEditingItem || !currentEditingType || !currentProject) return;
     
@@ -1873,42 +2129,8 @@ function saveBreadcrumbs() {
     saveToStorage('breadcrumbs', workContext.breadcrumbs);
 }
 
-// Integration functions
-function openItemWithContext(itemId, itemType) {
-    const item = findItem(itemId, itemType);
-    if (item) {
-        openItemEditor(item, itemType);
-        addToBreadcrumbs(currentProject.id, itemId, itemType, item.title);
-    }
-}
+// ===== POMODORO TIMER FUNCTIONS =====
 
-function switchToProject(projectId, callback) {
-    const project = projects.find(p => p.id == projectId);
-    if (!project) return;
-    
-    currentProject = project;
-    setValue('projectSelect', project.id);
-    setDisplay('dashboard', 'grid');
-    setDisplay('projectOverview', 'none');
-    setDisplay('topTasksRow', 'flex');
-    
-    // Apply project color theme
-    const dashboard = getEl('dashboard');
-    colorThemes.forEach(theme => {
-        dashboard.classList.remove(`project-theme-${theme}`);
-    });
-    if (project.colorTheme) {
-        dashboard.classList.add(`project-theme-${project.colorTheme}`);
-    }
-    dashboard.classList.add('project-themed');
-    
-    updateSettingsButton();
-    renderProject();
-    
-    if (callback) callback();
-}
-
-// Pomodoro Timer Functions
 function startPomodoro() {
     pomodoroIsRunning = true;
     setDisplay('pomodoroStart', 'none');
@@ -2269,7 +2491,8 @@ function clearPomodoroState() {
     }
 }
 
-// Essential functions that need to be available immediately - defined globally so HTML can access them
+// ===== ESSENTIAL UI FUNCTIONS =====
+
 function openProjectModal() {
     setDisplay('projectModal', 'block');
 }
@@ -2311,7 +2534,6 @@ function showProjectOverview() {
     setDisplay('dashboard', 'none');
     setDisplay('projectOverview', 'block');
     setValue('projectSelect', '');
-    setDisplay('topTasksRow', 'none');
     currentProject = null;
     
     // Remove project themes from dashboard
@@ -2323,6 +2545,7 @@ function showProjectOverview() {
     
     updateSettingsButton();
     renderProjectOverview();
+    renderGlobalTasks();
 }
 
 function toggleArchivedProjects() {
@@ -2359,7 +2582,6 @@ function selectProject(projectId) {
     switchProject();
 }
 
-// Updated switchProject function
 function switchProject() {
     // Save current context before switching
     if (currentEditingItem && currentEditingType && currentProject) {
@@ -2374,7 +2596,6 @@ function switchProject() {
         currentProject = projects.find(p => p.id == projectId);
         setDisplay('dashboard', 'grid');
         setDisplay('projectOverview', 'none');
-        setDisplay('topTasksRow', 'flex');
         
         // Apply project color theme
         const dashboard = getEl('dashboard');
@@ -2387,14 +2608,16 @@ function switchProject() {
         dashboard.classList.add('project-themed');
         
         updateSettingsButton();
-        renderProject(); // This now includes project-specific top tasks
+        renderProject();
         
-        // Check for previous work context
+        // Check for previous work context in this project
         const contextKey = `project-${projectId}`;
         const projectContext = workContext.projectContexts.get(contextKey);
         if (projectContext && projectContext.editorState) {
+            // Small delay to let project render
             setTimeout(() => {
                 const timeDiff = Date.now() - projectContext.timestamp;
+                // Only auto-restore if context is recent (within 4 hours)
                 if (timeDiff < 4 * 60 * 60 * 1000) {
                     restoreContext(projectContext);
                     showContextIndicator(`Resumed work on "${projectContext.title}"`, true);
@@ -2567,7 +2790,6 @@ function openItemEditor(item, itemType) {
     const standardFields = getEl('standardFields');
     const insertHeadingsBtn = getEl('insertHeadingsBtn');
     const copyToClipboardBtn = getEl('copyToClipboardBtn');
-    const editorContent = document.querySelector('.editor-content');
     const richEditor = getEl('richEditor');
     const textEditor = getEl('editorContent');
     
@@ -2579,6 +2801,11 @@ function openItemEditor(item, itemType) {
         // Handle backwards compatibility
         setValue('editorProposition', item.proposition || '');
         setValue('editorClientBrief', item.clientBrief || item.content || '');
+        
+        // Setup document upload for briefs
+        setTimeout(() => {
+            setupDocumentUpload();
+        }, 100);
     } else {
         // Standard fields for notes, copy, tasks
         setDisplay('briefFields', 'none');
@@ -2762,7 +2989,6 @@ function createProject() {
             notes: [],
             copy: [],
             tasks: [],
-            topTaskIds: [], // Initialize for new project-specific system
             createdAt: getCurrentTimestamp(),
             colorTheme: getNextColorTheme(),
             archived: false
@@ -2916,7 +3142,6 @@ function addQuickTask() {
         currentProject.tasks.unshift(task);
         saveProjects();
         renderProjectTasks();
-        renderTopTasks(); // Update top tasks display
         
         // Clear input
         setValue('taskTitle', '');
@@ -2943,7 +3168,7 @@ function handleEnterKey(event, type) {
     }
 }
 
-// Updated renderProject function to use new system
+// Render functions
 function renderProject() {
     if (!currentProject) return;
     
@@ -2951,7 +3176,6 @@ function renderProject() {
     renderNotes();
     renderCopy();
     renderProjectTasks();
-    initializeProjectTopTasks(); // Use new project-specific initialization
 }
 
 function renderProjectOverview() {
@@ -3227,22 +3451,28 @@ function renderCopy() {
     }).join('');
 }
 
-// Updated renderProjectTasks to work with new top tasks system
 function renderProjectTasks() {
     const container = getEl('projectTaskContainer');
     if (!container || !currentProject) return;
     
     if (!currentProject.tasks) currentProject.tasks = [];
     
-    // Get tasks not in top three for the "other tasks" section
-    const { other } = getProjectTopTasks();
+    // Ensure tasks have order values
+    currentProject.tasks.forEach((task, index) => {
+        if (task.order === undefined) {
+            task.order = index;
+        }
+    });
     
-    if (other.length === 0) {
-        container.innerHTML = '<div style="text-align: center; padding: 20px; color: #737373;">No additional tasks</div>';
+    // Sort tasks with completed at bottom
+    const sortedTasks = sortTasksWithCompletedAtBottom(currentProject.tasks);
+    
+    if (sortedTasks.length === 0) {
+        container.innerHTML = '<div style="text-align: center; padding: 20px; color: #737373;">No tasks yet</div>';
         return;
     }
     
-    container.innerHTML = other.map(task => {
+    container.innerHTML = sortedTasks.map(task => {
         const hasSource = task.sourceItemId && task.sourceItemType;
         let sourceItem = null;
         if (hasSource) {
@@ -3260,7 +3490,6 @@ function renderProjectTasks() {
         }
         
         const linkColor = getLinkColor(task, 'task') || '#10b981';
-        const isInTopThree = currentProject.topTaskIds && currentProject.topTaskIds.includes(task.id);
         
         return `
             <div class="project-task-item" 
@@ -3283,16 +3512,7 @@ function renderProjectTasks() {
                     ${task.completed ? 'opacity: 0.6;' : ''}
                  ">
                 
-                <div style="position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; align-items: center;">
-                    <div style="background: #f5f5f5; color: #525252; padding: 2px 6px; border-radius: 2px; font-size: 10px; font-weight: 600; text-transform: uppercase;">Task</div>
-                    ${!isInTopThree && !task.completed ? `
-                        <button onclick="event.stopPropagation(); addTaskToTopThree('${task.id}')" 
-                                style="background: #3b82f6; color: white; border: none; padding: 2px 6px; border-radius: 2px; font-size: 10px; cursor: pointer; font-weight: 600;"
-                                title="Add to Top 3">
-                            ★
-                        </button>
-                    ` : ''}
-                </div>
+                <div style="position: absolute; top: 8px; right: 8px; background: #f5f5f5; color: #525252; padding: 2px 6px; border-radius: 2px; font-size: 10px; font-weight: 600; text-transform: uppercase;">Task</div>
                 
                 <div style="display: flex; gap: 0px; align-items: flex-start; margin-bottom: 6px; padding: 0px; margin: 0px;">
                     <div style="background-color: transparent; border: none; margin: 0; margin-left: 39px; margin-top: 5px; padding: 0; flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;">
@@ -3323,7 +3543,7 @@ function renderProjectTasks() {
                 ` : ''}
                 
                 <div style="font-size: 11px; color: #a3a3a3; font-style: italic; margin-top: 8px; margin-bottom: 8px; padding-left: 63px; padding-right: 8px; display: flex; justify-content: space-between; align-items: center;">
-                    <span>${hasSource ? 'Double-click to open source' : 'Double-click to edit'} • Drag to top 3 or reorder</span>
+                    <span>${hasSource ? 'Double-click to open source' : 'Double-click to edit'} • Drag to reorder</span>
                     ${hasSource && (task.sourceItemType === 'note' || task.sourceItemType === 'copy') ? `
                         <span style="background: #fce7f3; color: #be185d; padding: 2px 6px; border-radius: 2px; font-size: 10px; font-weight: 600; text-transform: uppercase; cursor: pointer;" onclick="event.stopPropagation(); diveInToProjectSource('${task.id}')" title="Open in focus mode with Pomodoro">
                             Dive In
@@ -3352,23 +3572,21 @@ function findItem(itemId, itemType) {
     }
 }
 
-// Updated toggleProjectTask to work with new system
 function toggleProjectTask(taskId) {
     const task = currentProject.tasks.find(t => t.id == taskId);
     if (task) {
         task.completed = !task.completed;
-        
+        // Add completion timestamp when completed
         if (task.completed) {
             task.completedAt = getCurrentTimestamp();
-            // Remove completed tasks from top three
-            removeFromTopThree(taskId);
         } else {
             delete task.completedAt;
         }
-        
         saveProjects();
         renderProjectTasks();
-        renderTopTasks(); // Update top tasks display
+        
+        // Update global tasks if this affects them
+        renderGlobalTasks();
     }
 }
 
@@ -3750,47 +3968,6 @@ window.openTaskSource = function(taskId) {
     }
 };
 
-// Remove old global task order system and cleanup
-function cleanupOldGlobalSystem() {
-    // Remove old global storage
-    if (window.appStorage) {
-        delete window.appStorage['globalTaskOrder'];
-    }
-    
-    console.log('Cleaned up old global task system');
-}
-
-// Migration function to run once to clean up old data
-function migrateToProjectSpecificTopTasks() {
-    // Check if migration has already been done
-    const migrated = loadFromStorage('topTasksMigrated');
-    if (migrated) return;
-    
-    console.log('Migrating to project-specific top tasks system...');
-    
-    // Clean up old global system
-    cleanupOldGlobalSystem();
-    
-    // Initialize topTaskIds for all projects
-    projects.forEach(project => {
-        if (!project.topTaskIds) {
-            project.topTaskIds = [];
-            
-            // Auto-populate with recent tasks
-            const incompleteTasks = (project.tasks || []).filter(task => !task.completed);
-            incompleteTasks.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-            const recentTasks = incompleteTasks.slice(0, 3);
-            project.topTaskIds = recentTasks.map(task => task.id);
-            
-            console.log(`Initialized top tasks for project ${project.name} with ${recentTasks.length} tasks`);
-        }
-    });
-    
-    saveProjects();
-    saveToStorage('topTasksMigrated', true);
-    console.log('Migration completed');
-}
-
 // Setup delete button event listeners
 function setupDeleteListeners() {
     // Remove existing listeners first
@@ -3824,133 +4001,8 @@ function handleDeleteClick(event) {
     }
 }
 
-// Add the CSS for the new top tasks design
-function addTopTasksCSS() {
-    const additionalCSS = `
-        .top-task-item {
-            position: relative;
-            background: white;
-            border: 2px solid #e5e7eb;
-            border-left: 4px solid #10b981;
-            border-radius: 8px;
-            padding: 12px;
-            margin: 0 8px;
-            flex: 1;
-            min-height: 80px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
+// ===== INITIALIZATION =====
 
-        .top-task-item:hover {
-            border-color: #3b82f6;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-        }
-
-        .top-task-item.dragging {
-            opacity: 0.5;
-            transform: scale(0.95);
-        }
-
-        .top-tasks-drop-zone {
-            flex: 1;
-            min-height: 80px;
-            border: 2px dashed #d1d5db;
-            border-radius: 8px;
-            margin: 0 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #fafafa;
-            transition: all 0.2s ease;
-        }
-
-        .top-tasks-drop-zone.drag-over {
-            border-color: #0ea5e9;
-            background: #e0f2fe;
-        }
-
-        .drop-zone-content {
-            text-align: center;
-            color: #6b7280;
-        }
-
-        .drop-zone-icon {
-            font-size: 24px;
-            font-weight: bold;
-            margin-bottom: 4px;
-        }
-
-        .drop-zone-text {
-            font-size: 12px;
-        }
-
-        .task-title {
-            font-weight: 600;
-            color: #171717;
-            font-size: 14px;
-            line-height: 1.4;
-            margin-bottom: 4px;
-        }
-
-        .task-meta {
-            font-size: 11px;
-            color: #6b7280;
-            line-height: 1.3;
-        }
-
-        .task-checkbox {
-            position: absolute;
-            top: 8px;
-            right: 8px;
-            width: 16px;
-            height: 16px;
-            cursor: pointer;
-        }
-
-        .remove-from-top {
-            position: absolute;
-            top: 8px;
-            right: 28px;
-            background: #ef4444;
-            color: white;
-            border: none;
-            border-radius: 50%;
-            width: 18px;
-            height: 18px;
-            font-size: 12px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            opacity: 0;
-            transition: opacity 0.2s ease;
-        }
-
-        .top-task-item:hover .remove-from-top {
-            opacity: 1;
-        }
-
-        .remove-from-top:hover {
-            background: #dc2626;
-        }
-
-        #topTasksRow {
-            display: flex;
-            gap: 0;
-            margin-bottom: 20px;
-            padding: 16px;
-            background: #f8fafc;
-            border-radius: 12px;
-            border: 1px solid #e2e8f0;
-        }
-    `;
-    
-    const style = document.createElement('style');
-    style.textContent = additionalCSS;
-    document.head.appendChild(style);
-}
-
-// Updated initialization to include migration
 function initializeApp() {
     try {
         // Load work context first
@@ -3974,11 +4026,6 @@ function initializeApp() {
                 if (!project.notes) project.notes = [];
                 if (!project.copy) project.copy = [];
                 if (!project.tasks) project.tasks = [];
-                
-                // Initialize topTaskIds for new system
-                if (!project.topTaskIds) {
-                    project.topTaskIds = [];
-                }
                 
                 // Migrate old brief format to new format
                 if (project.briefs) {
@@ -4033,18 +4080,23 @@ function initializeApp() {
                     });
                 }
             });
+            saveProjects(); // Save the updated projects
             
-            saveProjects();
+            // Initialize the link color index based on existing colors
             initializeLinkColorIndex();
         } else {
             projects = [];
+            // Initialize link color index for new installations
             initializeLinkColorIndex();
         }
         
-        // Run migration for top tasks system
-        migrateToProjectSpecificTopTasks();
+        // Initialize global tasks system
+        loadGlobalTaskOrder();
+        cleanupGlobalTaskOrder();
+        autoPopulateTopThree();
+        setupTopTasksDropZones();
         
-        // Clean up old completed tasks
+        // Clean up old completed tasks (24+ hours old)
         cleanupOldCompletedTasks();
         
         // Load pomodoro state
@@ -4058,21 +4110,22 @@ function initializeApp() {
             pomodoroDailyCount = savedDaily.date === today ? savedDaily.count : 0;
         }
         
-        // Add the new CSS
-        addTopTasksCSS();
-        
         updateProjectSelector();
         showProjectOverview();
         updateSettingsButton();
+        
+        // Setup delete button event listeners
         setupDeleteListeners();
+        
+        // Render breadcrumbs
         renderBreadcrumbs();
         
-        // Set up periodic cleanup
+        // Set up periodic cleanup (every hour)
         setInterval(() => {
             cleanupOldCompletedTasks();
-        }, 60 * 60 * 1000);
+        }, 60 * 60 * 1000); // Run every hour
         
-        // Offer work resumption
+        // Offer work resumption after a short delay
         setTimeout(() => {
             offerWorkResumption();
         }, 2000);
@@ -4082,6 +4135,7 @@ function initializeApp() {
         // Fallback initialization
         projects = [];
         initializeLinkColorIndex();
+        loadGlobalTaskOrder();
         updateProjectSelector();
         showProjectOverview();
         updateSettingsButton();
@@ -4130,7 +4184,7 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         // Close confirmation modal first if open
         const confirmModal = getEl('confirmModal');
-        if (confirmModal.style.display === 'block') {
+        if (confirmModal && confirmModal.style.display === 'block') {
             cancelConfirm();
             return;
         }
@@ -4168,7 +4222,7 @@ document.addEventListener('keydown', (e) => {
     // Enter key on confirmation modal
     if (e.key === 'Enter') {
         const confirmModal = getEl('confirmModal');
-        if (confirmModal.style.display === 'block') {
+        if (confirmModal && confirmModal.style.display === 'block') {
             proceedConfirm();
             return;
         }
@@ -4187,7 +4241,7 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'b' && e.altKey) {
         e.preventDefault();
         const breadcrumbContainer = getEl('breadcrumbContainer');
-        if (breadcrumbContainer.style.display !== 'none') {
+        if (breadcrumbContainer && breadcrumbContainer.style.display !== 'none') {
             // Focus on the last breadcrumb
             const breadcrumbs = document.querySelectorAll('.breadcrumb-item');
             if (breadcrumbs.length > 0) {
@@ -4214,43 +4268,8 @@ document.addEventListener('keydown', (e) => {
         }
     }
     
-    // Project-specific top tasks keyboard shortcuts
-    if (e.key === '1' && e.ctrlKey && e.altKey) {
-        e.preventDefault();
-        // Quick promote most recent task to top 3
-        if (currentProject) {
-            const incompleteTasks = (currentProject.tasks || []).filter(task => !task.completed);
-            if (incompleteTasks.length > 0) {
-                // Sort by creation date (most recent first)
-                incompleteTasks.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-                const mostRecentTask = incompleteTasks[0];
-                addTaskToTopThree(mostRecentTask.id);
-            }
-        }
-    }
-    
-    if (e.key === '2' && e.ctrlKey && e.altKey) {
-        e.preventDefault();
-        // Clear project's top 3 tasks
-        if (currentProject) {
-            currentProject.topTaskIds = [];
-            saveProjects();
-            renderTopTasks();
-            showNotification('Project top 3 tasks cleared');
-        }
-    }
-    
-    if (e.key === '3' && e.ctrlKey && e.altKey) {
-        e.preventDefault();
-        // Force re-render top tasks
-        if (currentProject) {
-            renderTopTasks();
-            showNotification('Top tasks refreshed');
-        }
-    }
-    
     // Pomodoro shortcuts when editor is open
-    if (getEl('itemEditor').style.display === 'block') {
+    if (getEl('itemEditor') && getEl('itemEditor').style.display === 'block') {
         const pomodoroTimer = getEl('pomodoroTimer');
         if (pomodoroTimer && pomodoroTimer.style.display === 'block') {
             // Check if we're not in a contenteditable field
@@ -4312,6 +4331,16 @@ window.showConfirm = showConfirm;
 window.proceedConfirm = proceedConfirm;
 window.cancelConfirm = cancelConfirm;
 window.toggleArchiveProject = toggleArchiveProject;
+window.handleGlobalTaskDragStart = handleGlobalTaskDragStart;
+window.handleGlobalTaskDragEnd = handleGlobalTaskDragEnd;
+window.handleTaskDragOver = handleTaskDragOver;
+window.handleTaskDragLeave = handleTaskDragLeave;
+window.handleTaskDrop = handleTaskDrop;
+window.toggleGlobalTask = toggleGlobalTask;
+window.openGlobalTaskSource = openGlobalTaskSource;
+window.diveInToGlobalSource = diveInToGlobalSource;
+window.promoteToTopThree = promoteToTopThree;
+window.removeTaskFromTopThree = removeTaskFromTopThree;
 window.navigateToBreadcrumb = navigateToBreadcrumb;
 window.clearBreadcrumbs = clearBreadcrumbs;
 window.dismissResumePanel = dismissResumePanel;
@@ -4323,29 +4352,19 @@ window.skipPomodoro = skipPomodoro;
 window.toggleProjectTask = toggleProjectTask;
 window.diveInToProjectSource = diveInToProjectSource;
 
-// New project-specific top tasks functions made globally available
-window.renderTopTasks = renderTopTasks;
-window.addTaskToTopThree = addTaskToTopThree;
-window.removeFromTopThree = removeFromTopThree;
-window.toggleTopTask = toggleTopTask;
-window.diveInToTopTaskSource = diveInToTopTaskSource;
-window.handleTopTaskDragStart = handleTopTaskDragStart;
-window.handleTopTaskDragEnd = handleTopTaskDragEnd;
-window.handleTopTaskDragOver = handleTopTaskDragOver;
-window.handleTopTaskDragLeave = handleTopTaskDragLeave;
-window.handleTopTaskDrop = handleTopTaskDrop;
-window.initializeProjectTopTasks = initializeProjectTopTasks;
-window.setupHorizontalTasksDropZones = setupHorizontalTasksDropZones;
-
 // Helper render functions
 window.renderBriefs = renderBriefs;
 window.renderNotes = renderNotes;
 window.renderCopy = renderCopy;
 window.renderProjectTasks = renderProjectTasks;
+window.renderGlobalTasks = renderGlobalTasks;
 
-console.log('Project-specific top tasks system loaded. Features:');
-console.log('✓ Top 3 tasks per project (not global)');
-console.log('✓ Drag briefs/notes/copy into top 3 to create tasks');
-console.log('✓ Displacement when dropping between existing top tasks');
-console.log('✓ Drop to right side adds to general task list');
-console.log('✓ Brief deletion preserves linked items (removes linking only)');
+console.log('Creative Project Manager loaded successfully!');
+console.log('Features:');
+console.log('✓ Document upload for briefs (.docx files)');
+console.log('✓ Global task management system');
+console.log('✓ Smart breadcrumb trail (screen-width limited)');
+console.log('✓ Brief deletion preserves linked items');
+console.log('✓ Rich text support for client briefs');
+console.log('✓ Pomodoro timer with focus mode');
+console.log('✓ Context preservation system');
