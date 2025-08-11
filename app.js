@@ -1494,6 +1494,11 @@ function handleDragStart(event) {
 function handleDragEnd(event) {
     event.currentTarget.classList.remove('dragging');
     console.log('Drag ended');
+    
+    // Clean up drop position indicators
+    document.querySelectorAll('.drop-position-indicator').forEach(indicator => {
+        indicator.remove();
+    });
 }
 
 function handleDragOver(event) {
@@ -1511,6 +1516,11 @@ function handleDragLeave(event) {
     if (!event.currentTarget.contains(event.relatedTarget)) {
         event.currentTarget.classList.remove('drag-over');
         console.log('Drag leave');
+        
+        // Remove drop position indicators when leaving
+        document.querySelectorAll('.drop-position-indicator').forEach(indicator => {
+            indicator.remove();
+        });
     }
 }
 
@@ -1527,8 +1537,8 @@ function handleDrop(event, targetType) {
     
     // Check if this is a same-column drop (for reordering)
     if (draggedItemType === targetType) {
-        console.log('Same column drop - reordering not implemented yet');
-        showNotification('Reordering within columns will be implemented soon');
+        console.log('Same column drop - implementing reordering');
+        reorderItemInColumn(draggedItem, draggedItemType, event);
         draggedItem = null;
         draggedItemType = null;
         return;
@@ -1549,6 +1559,235 @@ function handleDrop(event, targetType) {
     // Clear drag state
     draggedItem = null;
     draggedItemType = null;
+}
+
+function reorderItemInColumn(item, itemType, event) {
+    if (!currentProject) return;
+    
+    console.log(`Reordering ${itemType} "${item.title}"`);
+    
+    // Get the target position from the drop event
+    const dropTarget = event.currentTarget;
+    const targetPosition = calculateDropPosition(dropTarget, event, itemType);
+    
+    let itemArray;
+    switch(itemType) {
+        case 'brief':
+            itemArray = currentProject.briefs;
+            break;
+        case 'note':
+            itemArray = currentProject.notes;
+            break;
+        case 'copy':
+            itemArray = currentProject.copy;
+            break;
+        case 'task':
+            itemArray = currentProject.tasks;
+            break;
+        default:
+            console.log('Unknown item type for reordering:', itemType);
+            return;
+    }
+    
+    // Find the current item in the array
+    const currentIndex = itemArray.findIndex(arrayItem => arrayItem.id === item.id);
+    if (currentIndex === -1) {
+        console.log('Item not found in array');
+        return;
+    }
+    
+    // Calculate new position (0 = top, array.length-1 = bottom)
+    let newPosition;
+    if (targetPosition === 'top') {
+        newPosition = 0;
+    } else if (targetPosition === 'bottom') {
+        newPosition = itemArray.length - 1;
+    } else if (typeof targetPosition === 'number') {
+        newPosition = Math.max(0, Math.min(targetPosition, itemArray.length - 1));
+    } else {
+        // Default to current position if we can't determine target
+        newPosition = currentIndex;
+    }
+    
+    console.log(`Moving item from position ${currentIndex} to position ${newPosition}`);
+    
+    // Only proceed if position actually changed
+    if (currentIndex === newPosition) {
+        console.log('Item dropped in same position, no reordering needed');
+        return;
+    }
+    
+    // Remove item from current position
+    const movedItem = itemArray.splice(currentIndex, 1)[0];
+    
+    // Insert at new position
+    itemArray.splice(newPosition, 0, movedItem);
+    
+    // Update order values for all items
+    itemArray.forEach((arrayItem, index) => {
+        arrayItem.order = index;
+    });
+    
+    // Save and re-render
+    saveProjects();
+    
+    // Re-render the appropriate column
+    switch(itemType) {
+        case 'brief':
+            renderBriefs();
+            break;
+        case 'note':
+            renderNotes();
+            break;
+        case 'copy':
+            renderCopy();
+            break;
+        case 'task':
+            renderProjectTasks();
+            break;
+    }
+    
+    showNotification(`Reordered "${item.title}" in ${itemType}s`);
+    console.log(`Successfully reordered ${itemType}`);
+}
+
+function calculateDropPosition(dropTarget, event, itemType) {
+    // Get the container for this item type
+    let container;
+    switch(itemType) {
+        case 'brief':
+            container = getEl('briefsList');
+            break;
+        case 'note':
+            container = getEl('notesList');
+            break;
+        case 'copy':
+            container = getEl('copyList');
+            break;
+        case 'task':
+            container = getEl('projectTaskContainer');
+            break;
+        default:
+            return 'bottom';
+    }
+    
+    if (!container) return 'bottom';
+    
+    // Get all item elements in the container
+    const itemElements = Array.from(container.children).filter(child => 
+        child.classList.contains('item') || 
+        child.classList.contains('project-task-item') ||
+        child.classList.contains('sortable-item')
+    );
+    
+    if (itemElements.length === 0) return 0;
+    
+    // Find the closest item to the drop position
+    const mouseY = event.clientY;
+    let closestIndex = 0;
+    let closestDistance = Infinity;
+    
+    itemElements.forEach((element, index) => {
+        const rect = element.getBoundingClientRect();
+        const elementCenter = rect.top + rect.height / 2;
+        const distance = Math.abs(mouseY - elementCenter);
+        
+        if (distance < closestDistance) {
+            closestDistance = distance;
+            closestIndex = index;
+        }
+    });
+    
+    // Determine if we should insert before or after the closest item
+    const closestElement = itemElements[closestIndex];
+    const rect = closestElement.getBoundingClientRect();
+    const elementCenter = rect.top + rect.height / 2;
+    
+    if (mouseY < elementCenter) {
+        // Insert before the closest item
+        return closestIndex;
+    } else {
+        // Insert after the closest item
+        return closestIndex + 1;
+    }
+}
+
+// Enhanced drag over handler to show drop position indicator
+function handleDragOver(event) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    
+    if (!event.currentTarget.classList.contains('drag-over')) {
+        event.currentTarget.classList.add('drag-over');
+        console.log('Drag over:', event.currentTarget.getAttribute('data-drop-message'));
+    }
+    
+    // Add visual indicator for reordering
+    if (draggedItem && draggedItemType) {
+        showDropPositionIndicator(event);
+    }
+}
+
+function showDropPositionIndicator(event) {
+    // Remove any existing indicators
+    document.querySelectorAll('.drop-position-indicator').forEach(indicator => {
+        indicator.remove();
+    });
+    
+    // Only show indicator for same-type drops (reordering)
+    const targetType = event.currentTarget.getAttribute('data-drop-type') || 
+                      event.currentTarget.closest('[data-drop-type]')?.getAttribute('data-drop-type');
+    
+    if (draggedItemType !== targetType) return;
+    
+    // Get the container
+    let container;
+    switch(draggedItemType) {
+        case 'brief':
+            container = getEl('briefsList');
+            break;
+        case 'note':
+            container = getEl('notesList');
+            break;
+        case 'copy':
+            container = getEl('copyList');
+            break;
+        case 'task':
+            container = getEl('projectTaskContainer');
+            break;
+        default:
+            return;
+    }
+    
+    if (!container) return;
+    
+    // Calculate drop position
+    const position = calculateDropPosition(event.currentTarget, event, draggedItemType);
+    const itemElements = Array.from(container.children).filter(child => 
+        child.classList.contains('item') || 
+        child.classList.contains('project-task-item') ||
+        child.classList.contains('sortable-item')
+    );
+    
+    // Create drop indicator
+    const indicator = document.createElement('div');
+    indicator.className = 'drop-position-indicator';
+    indicator.style.cssText = `
+        height: 2px;
+        background: #3b82f6;
+        margin: 2px 0;
+        border-radius: 1px;
+        opacity: 0.8;
+        position: relative;
+        z-index: 1000;
+    `;
+    
+    // Insert indicator at the calculated position
+    if (typeof position === 'number' && position < itemElements.length) {
+        container.insertBefore(indicator, itemElements[position]);
+    } else {
+        container.appendChild(indicator);
+    }
 }
 
 function moveItemBetweenColumns(item, fromType, toType) {
@@ -4643,6 +4882,9 @@ window.handleDragEnd = handleDragEnd;
 window.handleDragOver = handleDragOver;
 window.handleDragLeave = handleDragLeave;
 window.handleDrop = handleDrop;
+window.reorderItemInColumn = reorderItemInColumn;
+window.calculateDropPosition = calculateDropPosition;
+window.showDropPositionIndicator = showDropPositionIndicator;
 window.formatRichText = formatRichText;
 window.createLink = createLink;
 window.copyContentToClipboard = copyContentToClipboard;
