@@ -908,6 +908,376 @@ function loadGlobalTaskOrder() {
     }
 }
 
+// ENHANCED: Horizontal Top Tasks for Project Pages (MOVED HERE TO BE DEFINED EARLY)
+// Render top 3 tasks in horizontal row format for current project
+function renderHorizontalTopTasks() {
+    const container = getEl('topTasksRow');
+    if (!container || !currentProject) {
+        console.log('renderHorizontalTopTasks: Missing container or project');
+        return;
+    }
+    
+    console.log('renderHorizontalTopTasks: Starting render for project', currentProject.name);
+    
+    // Get all tasks from current project only
+    const currentProjectTasks = currentProject.tasks ? currentProject.tasks.map(task => ({
+        ...task,
+        projectName: currentProject.name,
+        projectId: currentProject.id,
+        projectColorTheme: currentProject.colorTheme
+    })) : [];
+    
+    // Filter out completed tasks and get top 3 from this project
+    const availableTasks = currentProjectTasks.filter(task => !task.completed);
+    
+    // Get the top 3 tasks for this project specifically
+    const projectTopThree = globalTaskOrder.topThree
+        .map(uniqueId => {
+            const [projectId, taskId] = uniqueId.split('-');
+            if (projectId == currentProject.id) {
+                return currentProjectTasks.find(task => task.id == taskId);
+            }
+            return null;
+        })
+        .filter(task => task && !task.completed)
+        .slice(0, 3);
+    
+    // Fill any remaining slots with other tasks from this project
+    const usedTaskIds = new Set(projectTopThree.map(task => task.id));
+    const otherProjectTasks = availableTasks.filter(task => !usedTaskIds.has(task.id));
+    
+    // Combine to ensure we have up to 3 tasks
+    const topThreeTasks = [...projectTopThree];
+    while (topThreeTasks.length < 3 && otherProjectTasks.length > 0) {
+        const nextTask = otherProjectTasks.shift();
+        topThreeTasks.push(nextTask);
+        
+        // Add to global top three if not already there
+        const uniqueId = createTaskUniqueId(currentProject.id, nextTask.id);
+        if (!globalTaskOrder.topThree.includes(uniqueId)) {
+            globalTaskOrder.topThree.push(uniqueId);
+            // Remove from other if it was there
+            globalTaskOrder.other = globalTaskOrder.other.filter(id => id !== uniqueId);
+        }
+    }
+    
+    console.log('renderHorizontalTopTasks: Top three tasks to render:', topThreeTasks);
+    
+    // Render the 3 slots
+    container.innerHTML = '';
+    for (let i = 0; i < 3; i++) {
+        const task = topThreeTasks[i];
+        if (task) {
+            container.appendChild(createHorizontalTaskElement(task, i));
+        } else {
+            container.appendChild(createHorizontalDropZone(i));
+        }
+    }
+    
+    // Save any changes to global task order
+    saveGlobalTaskOrder();
+    console.log('renderHorizontalTopTasks: Render complete');
+}
+
+function createHorizontalTaskElement(task, position) {
+    const hasSource = task.sourceItemId && task.sourceItemType;
+    let linkColor = '#10b981'; // Default green
+    
+    // Get link color for the task
+    if (hasSource) {
+        let sourceItem = null;
+        switch(task.sourceItemType) {
+            case 'brief':
+                sourceItem = currentProject.briefs?.find(b => b.id === task.sourceItemId);
+                break;
+            case 'note':
+                sourceItem = currentProject.notes?.find(n => n.id === task.sourceItemId);
+                if (sourceItem?.linkedBriefId) {
+                    const brief = currentProject.briefs?.find(b => b.id === sourceItem.linkedBriefId);
+                    linkColor = brief?.linkColor || linkColor;
+                }
+                break;
+            case 'copy':
+                sourceItem = currentProject.copy?.find(c => c.id === task.sourceItemId);
+                if (sourceItem?.linkedBriefId) {
+                    const brief = currentProject.briefs?.find(b => b.id === sourceItem.linkedBriefId);
+                    linkColor = brief?.linkColor || linkColor;
+                }
+                break;
+        }
+        if (sourceItem && task.sourceItemType === 'brief') {
+            linkColor = sourceItem.linkColor || linkColor;
+        }
+    }
+    
+    const taskElement = document.createElement('div');
+    taskElement.className = 'top-task-item';
+    taskElement.draggable = true;
+    taskElement.style.borderLeftColor = linkColor;
+    
+    // Add data attributes for drag and drop
+    taskElement.setAttribute('data-unique-id', createTaskUniqueId(task.projectId, task.id));
+    taskElement.setAttribute('data-project-id', task.projectId);
+    taskElement.setAttribute('data-task-id', task.id);
+    taskElement.setAttribute('data-position', position);
+    
+    // Add event listeners
+    taskElement.addEventListener('dragstart', handleHorizontalTaskDragStart);
+    taskElement.addEventListener('dragend', handleHorizontalTaskDragEnd);
+    taskElement.addEventListener('click', () => {
+        if (hasSource) {
+            openTaskSource(task.id);
+        } else {
+            openItemEditor(task, 'task');
+        }
+    });
+    
+    // Create content
+    taskElement.innerHTML = `
+        <div class="task-title">${task.title}</div>
+        <div class="task-meta">
+            ${hasSource ? 'Has source • ' : ''}Created: ${formatDate(task.createdAt)}
+        </div>
+        <input type="checkbox" 
+               class="task-checkbox"
+               ${task.completed ? 'checked' : ''}
+               onclick="event.stopPropagation(); toggleHorizontalTask('${task.projectId}', '${task.id}')">
+    `;
+    
+    return taskElement;
+}
+
+function createHorizontalDropZone(position) {
+    const dropZone = document.createElement('div');
+    dropZone.className = 'top-tasks-drop-zone';
+    dropZone.setAttribute('data-position', position);
+    
+    // Add drag and drop event listeners
+    dropZone.addEventListener('dragover', handleHorizontalDragOver);
+    dropZone.addEventListener('dragleave', handleHorizontalDragLeave);
+    dropZone.addEventListener('drop', (e) => handleHorizontalDrop(e, position));
+    
+    return dropZone;
+}
+
+// Horizontal task drag and drop handlers
+function handleHorizontalTaskDragStart(event) {
+    const taskElement = event.currentTarget;
+    const uniqueId = taskElement.getAttribute('data-unique-id');
+    const projectId = taskElement.getAttribute('data-project-id');
+    const taskId = taskElement.getAttribute('data-task-id');
+    const position = parseInt(taskElement.getAttribute('data-position'));
+    
+    draggedGlobalTask = { uniqueId, projectId, taskId, sourcePosition: position };
+    taskElement.classList.add('dragging');
+    taskElement.style.opacity = '0.5';
+    
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', '');
+}
+
+function handleHorizontalTaskDragEnd(event) {
+    event.currentTarget.classList.remove('dragging');
+    event.currentTarget.style.opacity = '1';
+    draggedGlobalTask = null;
+}
+
+function handleHorizontalDragOver(event) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    
+    if (!event.currentTarget.classList.contains('drag-over')) {
+        event.currentTarget.classList.add('drag-over');
+        event.currentTarget.style.background = '#e0f2fe';
+        event.currentTarget.style.borderColor = '#0ea5e9';
+    }
+}
+
+function handleHorizontalDragLeave(event) {
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+        event.currentTarget.classList.remove('drag-over');
+        event.currentTarget.style.background = '#fafafa';
+        event.currentTarget.style.borderColor = '#d4d4d4';
+    }
+}
+
+function handleHorizontalDrop(event, targetPosition) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('drag-over');
+    event.currentTarget.style.background = '#fafafa';
+    event.currentTarget.style.borderColor = '#d4d4d4';
+    
+    if (!draggedGlobalTask) return;
+    
+    const { uniqueId, projectId, taskId } = draggedGlobalTask;
+    
+    // Check if this is a task from current project
+    if (projectId != currentProject.id) {
+        showNotification('Can only reorder tasks within the same project');
+        return;
+    }
+    
+    // Remove from current position in global order
+    globalTaskOrder.topThree = globalTaskOrder.topThree.filter(id => id !== uniqueId);
+    globalTaskOrder.other = globalTaskOrder.other.filter(id => id !== uniqueId);
+    
+    // Insert at target position in top three
+    globalTaskOrder.topThree.splice(targetPosition, 0, uniqueId);
+    
+    // Keep only first 3 items in top three
+    if (globalTaskOrder.topThree.length > 3) {
+        const overflow = globalTaskOrder.topThree.splice(3);
+        globalTaskOrder.other.unshift(...overflow);
+    }
+    
+    saveGlobalTaskOrder();
+    renderHorizontalTopTasks();
+    
+    // Also update the overview page if it's visible
+    if (getEl('projectOverview').style.display === 'block') {
+        renderGlobalTasks();
+    }
+    
+    showNotification(`Task moved to position ${targetPosition + 1}`);
+}
+
+// Handle task completion in horizontal view
+function toggleHorizontalTask(projectId, taskId) {
+    const project = projects.find(p => p.id == projectId);
+    if (project) {
+        const task = project.tasks.find(t => t.id == taskId);
+        if (task) {
+            task.completed = !task.completed;
+            
+            if (task.completed) {
+                task.completedAt = getCurrentTimestamp();
+                
+                // Remove completed tasks from top three
+                const uniqueId = createTaskUniqueId(projectId, taskId);
+                globalTaskOrder.topThree = globalTaskOrder.topThree.filter(id => id !== uniqueId);
+                globalTaskOrder.other = globalTaskOrder.other.filter(id => id !== uniqueId);
+                saveGlobalTaskOrder();
+            } else {
+                delete task.completedAt;
+            }
+            
+            saveProjects();
+            renderHorizontalTopTasks();
+            renderProjectTasks(); // Update the main project tasks view too
+            
+            // Update global tasks if overview is visible
+            if (getEl('projectOverview').style.display === 'block') {
+                renderGlobalTasks();
+            }
+        }
+    }
+}
+
+// Enhanced function to handle drag from other areas to horizontal top tasks
+function setupHorizontalTasksDropZones() {
+    const container = getEl('topTasksRow');
+    if (!container) return;
+    
+    // Allow dropping tasks from other areas onto the entire row
+    container.addEventListener('dragover', (e) => {
+        if (draggedItem && draggedItem.type === 'task') {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+        }
+    });
+    
+    container.addEventListener('drop', (e) => {
+        if (draggedItem && draggedItem.type === 'task' && currentProject) {
+            e.preventDefault();
+            
+            // Add the dragged task to top three
+            const uniqueId = createTaskUniqueId(currentProject.id, draggedItem.id);
+            
+            // Remove from other areas
+            globalTaskOrder.topThree = globalTaskOrder.topThree.filter(id => id !== uniqueId);
+            globalTaskOrder.other = globalTaskOrder.other.filter(id => id !== uniqueId);
+            
+            // Add to top three (respect 3-item limit)
+            if (globalTaskOrder.topThree.length >= 3) {
+                const lastItem = globalTaskOrder.topThree.pop();
+                globalTaskOrder.other.unshift(lastItem);
+            }
+            globalTaskOrder.topThree.push(uniqueId);
+            
+            saveGlobalTaskOrder();
+            renderHorizontalTopTasks();
+            renderProjectTasks();
+            
+            showNotification(`"${draggedItem.title}" added to top tasks`);
+            
+            // Clear drag state
+            draggedItem = null;
+            draggedItemType = null;
+        }
+    });
+}
+
+// Function to populate horizontal top tasks for current project
+function autoPopulateHorizontalTopTasks() {
+    if (!currentProject) return;
+    
+    // Get current project tasks that are in global top three
+    const projectTopThree = globalTaskOrder.topThree
+        .map(uniqueId => {
+            const [projectId, taskId] = uniqueId.split('-');
+            if (projectId == currentProject.id) {
+                return currentProject.tasks.find(task => task.id == taskId && !task.completed);
+            }
+            return null;
+        })
+        .filter(Boolean);
+    
+    // If we have fewer than 3, add more from current project
+    if (projectTopThree.length < 3) {
+        const usedTaskIds = new Set(projectTopThree.map(task => task.id));
+        const availableTasks = currentProject.tasks
+            .filter(task => !task.completed && !usedTaskIds.has(task.id))
+            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        
+        const needed = 3 - projectTopThree.length;
+        const tasksToAdd = availableTasks.slice(0, needed);
+        
+        tasksToAdd.forEach(task => {
+            const uniqueId = createTaskUniqueId(currentProject.id, task.id);
+            globalTaskOrder.topThree.push(uniqueId);
+            // Remove from other if it was there
+            globalTaskOrder.other = globalTaskOrder.other.filter(id => id !== uniqueId);
+        });
+        
+        if (tasksToAdd.length > 0) {
+            saveGlobalTaskOrder();
+            console.log(`Auto-populated ${tasksToAdd.length} tasks for project ${currentProject.name}`);
+        }
+    }
+}
+
+// UPDATED: Enhanced project rendering to include horizontal top tasks
+function renderProjectWithTopTasks() {
+    if (!currentProject) return;
+    
+    // Auto-populate if needed
+    autoPopulateHorizontalTopTasks();
+    
+    // Render horizontal top tasks
+    renderHorizontalTopTasks();
+    
+    // Setup drop zones
+    setupHorizontalTasksDropZones();
+    
+    // Render other project components
+    renderBriefs();
+    renderNotes();
+    renderCopy();
+    renderProjectTasks();
+}
+
+// END OF HORIZONTAL TOP TASKS FUNCTIONS
+
 function showConfirm(title, message, callback, data = null) {
     console.log('Showing custom confirmation:', title, message);
     
@@ -2354,6 +2724,15 @@ function switchProject() {
         setDisplay('projectOverview', 'none');
         setDisplay('topTasksRow', 'flex'); // Make sure horizontal row is visible
         
+        // DEBUGGING: Force make sure container is visible
+        const topTasksRow = getEl('topTasksRow');
+        if (topTasksRow) {
+            topTasksRow.style.display = 'flex';
+            console.log('Top tasks row forced visible in switchProject');
+        } else {
+            console.error('Top tasks row element not found!');
+        }
+        
         // Apply project color theme
         const dashboard = getEl('dashboard');
         // Remove all existing theme classes
@@ -2367,7 +2746,7 @@ function switchProject() {
         dashboard.classList.add('project-themed');
         
         updateSettingsButton();
-        renderProject(); // This now includes horizontal top tasks
+        renderProject(); // This now includes horizontal top tasks with debugging
         
         // Check for previous work context in this project
         const contextKey = `project-${projectId}`;
@@ -3890,7 +4269,7 @@ function forceInitializeTopTasks() {
         container.style.display = 'flex';
     }
     
-    // Force population
+    // Force population (now these functions are defined earlier)
     autoPopulateHorizontalTopTasks();
     renderHorizontalTopTasks();
     setupHorizontalTasksDropZones();
@@ -4317,6 +4696,12 @@ window.handleHorizontalTaskDragEnd = handleHorizontalTaskDragEnd;
 window.handleHorizontalDragOver = handleHorizontalDragOver;
 window.handleHorizontalDragLeave = handleHorizontalDragLeave;
 window.handleHorizontalDrop = handleHorizontalDrop;
+
+// DEBUGGING: Make debug functions globally available
+window.debugTopTasks = debugTopTasks;
+window.manuallyPopulateTopTasks = manuallyPopulateTopTasks;
+window.simpleRenderTopTasks = simpleRenderTopTasks;
+window.forceInitializeTopTasks = forceInitializeTopTasks;
 
 // Helper render functions with original names for compatibility
 window.renderBriefs = renderBriefs;
