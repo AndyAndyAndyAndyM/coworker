@@ -26,6 +26,24 @@
             <button id="projectSettingsBtn" onclick="openProjectSettings()" style="display: none;">
                 Settings
             </button>
+            
+            <!-- Help Button - add this near other navigation buttons -->
+<button onclick="showHelp()" style="
+    background: #f3f4f6; 
+    border: 1px solid #d1d5db; 
+    border-radius: 4px; 
+    width: 32px; 
+    height: 32px; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    cursor: pointer; 
+    font-size: 16px; 
+    font-weight: 600;
+    color: #374151;
+" title="Help (F1)">?
+</button>
+            
         </div>
     </div>
 
@@ -181,6 +199,165 @@
             <button onclick="createProject()">Create Project</button>
         </div>
     </div>
+
+    <!-- Help Modal -->
+<div id="helpModal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 800px; max-height: 90vh; overflow-y: auto;">
+        <div class="modal-header">
+            <h2>📖 Help & User Guide</h2>
+            <span class="close" onclick="closeModal('helpModal')">&times;</span>
+        </div>
+        <div class="modal-body">
+            <!-- Quick Start -->
+            <section style="margin-bottom: 30px;">
+                <h3 style="color: #1f2937; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px;">🚀 Quick Start</h3>
+                <ol style="line-height: 1.6;">
+                    <li><strong>Create a Project:</strong> Click "New Project" to start organizing your work</li>
+                    <li><strong>Add Briefs:</strong> Create project briefs with propositions and client requirements</li>
+                    <li><strong>Develop Ideas:</strong> Drag briefs to create linked notes and copy</li>
+                    <li><strong>Create Tasks:</strong> Drag any item to tasks to create actionable items</li>
+                    <li><strong>Prioritize:</strong> Use drag & drop to manage your top 3 priority tasks</li>
+                </ol>
+            </section>
+
+            <!-- Workflow -->
+            <section style="margin-bottom: 30px;">
+                <h3 style="color: #1f2937; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px;">🔄 Workflow</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin: 20px 0;">
+                    <div style="text-align: center; padding: 15px; background: #f0f9ff; border-radius: 8px;">
+                        <div style="font-size: 24px; margin-bottom: 8px;">📝</div>
+                        <strong>Briefs</strong><br>
+                        <small>Project requirements & propositions</small>
+                    </div>
+                    <div style="text-align: center; padding: 15px; background: #f0fdf4; border-radius: 8px;">
+                        <div style="font-size: 24px; margin-bottom: 8px;">📓</div>
+                        <strong>Notes</strong><br>
+                        <small>Ideas & research</small>
+                    </div>
+                    <div style="text-align: center; padding: 15px; background: #fef3c7; border-radius: 8px;">
+                        <div style="font-size: 24px; margin-bottom: 8px;">✏️</div>
+                        <strong>Copy</strong><br>
+                        <small>Written content</small>
+                    </div>
+                    <div style="text-align: center; padding: 15px; background: #fce7f3; border-radius: 8px;">
+                        <div style="font-size: 24px; margin-bottom: 8px;">✅</div>
+                        <strong>Tasks</strong><br>
+                        <small>Action items</small>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Drag & Drop -->
+            <section style="margin-bottom: 30px;">
+                <h3 style="color: #1f2937; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px;">🎯 Drag & Drop</h3>
+                <ul style="line-height: 1.8;">
+                    <li><strong>Cross-Column Creation:</strong> Drag brief → notes/copy to create linked items</li>
+                    <li><strong>Task Creation:</strong> Drag any item → tasks to create actionable tasks</li>
+                    <li><strong>Reordering:</strong> Drag items within the same column to reorder</li>
+                    <li><strong>Top Tasks:</strong> Drag tasks to the horizontal priority bar</li>
+                    <li><strong>Priority Management:</strong> Use ⭐ and × buttons to manage top 3 tasks</li>
+                </ul>
+            </section>
+
+            <!-- Top Tasks System -->
+            <section style="margin-bottom: 30px;">
+                <h3 style="color: #1f2937; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px;">⭐ Top Tasks System</h3>
+                <div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin: 10px 0;">
+                    <p><strong>Global Priority:</strong> Your top 3 tasks appear in both the overview and horizontal bar</p>
+                    <ul style="margin: 10px 0; line-height: 1.6;">
+                        <li><strong>Horizontal Bar:</strong> Shows top 3 tasks while working on any project</li>
+                        <li><strong>Overview Page:</strong> Manage all tasks across projects</li>
+                        <li><strong>Synchronized:</strong> Changes in one view instantly update the other</li>
+                        <li><strong>Cross-Project:</strong> See important tasks from other projects</li>
+                    </ul>
+                </div>
+            </section>
+
+            <!-- Pomodoro & Focus -->
+            <section style="margin-bottom: 30px;">
+                <h3 style="color: #1f2937; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px;">🍅 Pomodoro & Focus</h3>
+                <ul style="line-height: 1.8;">
+                    <li><strong>Focus Mode:</strong> Available when editing notes or copy</li>
+                    <li><strong>Dive In:</strong> Click "Dive In" on tasks to enter focus mode + start timer</li>
+                    <li><strong>Fullscreen:</strong> Automatic fullscreen mode during focus sessions</li>
+                    <li><strong>Context Preservation:</strong> Work state saved during breaks</li>
+                    <li><strong>Session Tracking:</strong> Daily and session counters</li>
+                </ul>
+            </section>
+
+            <!-- Context & Navigation -->
+            <section style="margin-bottom: 30px;">
+                <h3 style="color: #1f2937; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px;">🧭 Context & Navigation</h3>
+                <ul style="line-height: 1.8;">
+                    <li><strong>Breadcrumbs:</strong> Track your recent work items</li>
+                    <li><strong>Work Resumption:</strong> Continue where you left off</li>
+                    <li><strong>Auto-save:</strong> Content saved automatically every 1.5 seconds</li>
+                    <li><strong>Context Restoration:</strong> Editor state restored when switching back</li>
+                </ul>
+            </section>
+
+            <!-- Keyboard Shortcuts -->
+            <section style="margin-bottom: 20px;">
+                <h3 style="color: #1f2937; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px;">⌨️ Keyboard Shortcuts</h3>
+                
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+                    <!-- General -->
+                    <div>
+                        <h4 style="color: #374151; margin-bottom: 10px;">General</h4>
+                        <table style="width: 100%; font-size: 14px;">
+                            <tr><td><kbd>F1</kbd> or <kbd>Ctrl + ?</kbd></td><td>Show this help</td></tr>
+                            <tr><td><kbd>Esc</kbd></td><td>Close modals/exit fullscreen</td></tr>
+                            <tr><td><kbd>Enter</kbd></td><td>Confirm actions</td></tr>
+                            <tr><td><kbd>Ctrl + S</kbd></td><td>Manual save + preserve context</td></tr>
+                        </table>
+                    </div>
+
+                    <!-- Navigation -->
+                    <div>
+                        <h4 style="color: #374151; margin-bottom: 10px;">Navigation</h4>
+                        <table style="width: 100%; font-size: 14px;">
+                            <tr><td><kbd>Alt + B</kbd></td><td>Focus on breadcrumbs</td></tr>
+                            <tr><td><kbd>Ctrl + Shift + R</kbd></td><td>Resume last work</td></tr>
+                        </table>
+                    </div>
+
+                    <!-- Top Tasks -->
+                    <div>
+                        <h4 style="color: #374151; margin-bottom: 10px;">Top Tasks</h4>
+                        <table style="width: 100%; font-size: 14px;">
+                            <tr><td><kbd>Ctrl + Alt + 1</kbd></td><td>Promote recent task to top 3</td></tr>
+                            <tr><td><kbd>Ctrl + Alt + 2</kbd></td><td>Clear all top 3 tasks</td></tr>
+                            <tr><td><kbd>Ctrl + Alt + 3</kbd></td><td>Refresh horizontal tasks</td></tr>
+                        </table>
+                    </div>
+
+                    <!-- Pomodoro -->
+                    <div>
+                        <h4 style="color: #374151; margin-bottom: 10px;">Pomodoro (in editor)</h4>
+                        <table style="width: 100%; font-size: 14px;">
+                            <tr><td><kbd>Space</kbd></td><td>Start/pause timer</td></tr>
+                            <tr><td><kbd>Ctrl + R</kbd></td><td>Reset timer</td></tr>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tips -->
+            <section>
+                <h3 style="color: #1f2937; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px;">💡 Pro Tips</h3>
+                <div style="background: #fef7cd; padding: 15px; border-radius: 8px; border-left: 4px solid #f59e0b;">
+                    <ul style="line-height: 1.8; margin: 0;">
+                        <li><strong>Color Coding:</strong> Each brief gets a unique color that flows through linked items</li>
+                        <li><strong>Rich Text:</strong> Notes and copy support rich formatting and headings</li>
+                        <li><strong>Standard Structure:</strong> Use "Insert Headings" in notes for consistent structure</li>
+                        <li><strong>Copy to Clipboard:</strong> Export formatted content with proper styling</li>
+                        <li><strong>Project Themes:</strong> Each project has its own color theme</li>
+                    </ul>
+                </div>
+            </section>
+        </div>
+    </div>
+</div>
 
     <!-- Item Editor Modal -->
     <div id="itemEditor" class="editor-modal">
