@@ -1398,6 +1398,15 @@ function handleDrop(event, targetType) {
         return;
     }
     
+    // Validate drop combinations - prevent tasks from creating other item types
+    if (draggedItemType === 'task' && (targetType === 'brief' || targetType === 'note' || targetType === 'copy')) {
+        console.log('Invalid drop: Cannot create briefs, notes, or copy from tasks');
+        showNotification('Tasks cannot be converted to briefs, notes, or copy. Tasks can only be reordered within the task column.');
+        draggedItem = null;
+        draggedItemType = null;
+        return;
+    }
+    
     // Check if this is a same-column drop (for reordering)
     if (draggedItemType === targetType) {
         console.log('Same column drop - implementing reordering');
@@ -4304,12 +4313,14 @@ function renderProjectTasks() {
                 ` : ''}
                 
                 <div style="font-size: 11px; color: #a3a3a3; font-style: italic; margin-top: 8px; margin-bottom: 8px; padding-left: 63px; padding-right: 8px; display: flex; justify-content: space-between; align-items: center;">
-                    <span>${hasSource ? 'Double-click to open source' : 'Double-click to edit'} • Drag to reorder</span>
-                    ${hasSource && (task.sourceItemType === 'note' || task.sourceItemType === 'copy') ? `
-                        <span style="background: #fce7f3; color: #be185d; padding: 2px 6px; border-radius: 2px; font-size: 10px; font-weight: 600; text-transform: uppercase; cursor: pointer;" onclick="event.stopPropagation(); diveInToProjectSource('${task.id}')" title="Open in focus mode with Pomodoro">
-                            Dive In
-                        </span>
-                    ` : ''}
+                    <span>${hasSource ? 'Double-click to open source' : 'Double-click to edit'} • Drag to reorder within tasks</span>
+                    <div style="display: flex; gap: 8px;">
+                        ${hasSource && (task.sourceItemType === 'note' || task.sourceItemType === 'copy') ? `
+                            <span style="background: #fce7f3; color: #be185d; padding: 2px 6px; border-radius: 2px; font-size: 10px; font-weight: 600; text-transform: uppercase; cursor: pointer;" onclick="event.stopPropagation(); diveInToProjectSource('${task.id}')" title="Open in focus mode with Pomodoro">
+                                Dive In
+                            </span>
+                        ` : ''}
+                    </div>
                 </div>
             </div>
         `;
@@ -4811,11 +4822,13 @@ function autosaveItem() {
     }
     
     const oldTitle = currentEditingItem.title;
+    const titleChanged = oldTitle !== newTitle;
+    
     currentEditingItem.title = newTitle;
     currentEditingItem.lastModified = getCurrentTimestamp();
     
     // Check if content has actually changed to trigger reordering
-    let contentChanged = oldTitle !== newTitle;
+    let contentChanged = titleChanged;
     
     // Handle different item types
     if (currentEditingType === 'brief') {
@@ -4863,6 +4876,12 @@ function autosaveItem() {
         }
     }
     
+    // Update linked task names if title changed
+    if (titleChanged && (currentEditingType === 'brief' || currentEditingType === 'note' || currentEditingType === 'copy')) {
+        console.log(`Title changed from "${oldTitle}" to "${newTitle}", updating linked tasks`);
+        updateLinkedTaskNames(currentEditingItem.id, currentEditingType, newTitle);
+    }
+    
     // Move to top if content changed and we're actively editing
     if (contentChanged && currentProject) {
         moveItemToTop(currentEditingItem, currentEditingType);
@@ -4893,6 +4912,12 @@ function autosaveItem() {
             case 'task':
                 renderProjectTasks();
                 break;
+        }
+        
+        // If title changed and there are linked tasks, also re-render tasks
+        if (titleChanged && (currentEditingType === 'brief' || currentEditingType === 'note' || currentEditingType === 'copy')) {
+            renderProjectTasks();
+            renderGlobalTasks();
         }
     }, 100);
 }
@@ -5580,12 +5605,22 @@ console.log('✓ Rich text support for notes, copy, and client briefs');
 console.log('✓ Pomodoro timer with focus mode');
 console.log('✓ Context preservation system');
 console.log('✓ Drag and drop between columns to create linked items');
+console.log('✓ Incremental naming for multiple items from same brief');
+console.log('✓ Automatic task name updates when source items are renamed');
+console.log('✓ Smart name updates when moving notes ↔ copy');
 console.log('');
 console.log('DRAG & DROP USAGE:');
-console.log('• Drag briefs → notes/copy to create linked items');
+console.log('• Drag briefs → notes/copy to create linked items (auto-numbered)');
 console.log('• Drag notes/copy → tasks to create tasks');
 console.log('• Drag within same column to reorder');
-console.log('• Drag notes ↔ copy to move between columns');
+console.log('• Drag notes ↔ copy to move between columns (name auto-updated)');
+console.log('• Tasks can only be reordered within task column');
+console.log('');
+console.log('SMART FEATURES:');
+console.log('• Multiple notes/copy from same brief: "Brief - note", "Brief - note 2", etc.');
+console.log('• Note → Copy adds "- copy" suffix');
+console.log('• Copy → Note replaces "- copy" with "- note"');
+console.log('• Renaming briefs/notes/copy automatically updates linked task names');
 console.log('');
 console.log('TROUBLESHOOTING:');
 console.log('• If drag & drop stops working: forceDropZoneReset()');
