@@ -3057,18 +3057,41 @@ function openItemEditor(item, itemType) {
         saveCurrentContext();
     }
     
-    currentEditingItem = item;
+    // IMPORTANT: Find the actual item reference in the project arrays
+    let actualItem = null;
+    if (currentProject) {
+        switch(itemType) {
+            case 'brief':
+                actualItem = currentProject.briefs.find(b => b.id === item.id);
+                break;
+            case 'note':
+                actualItem = currentProject.notes.find(n => n.id === item.id);
+                break;
+            case 'copy':
+                actualItem = currentProject.copy.find(c => c.id === item.id);
+                break;
+            case 'task':
+                actualItem = currentProject.tasks.find(t => t.id === item.id);
+                break;
+        }
+    }
+    
+    // Use the actual item reference if found, otherwise use the passed item
+    currentEditingItem = actualItem || item;
     currentEditingType = itemType;
     hasUnsavedChanges = false;
     
+    console.log(`Opening editor for ${itemType}:`, currentEditingItem.title);
+    console.log('Using actual item reference?', actualItem !== null);
+    
     // Add to breadcrumbs
     if (currentProject) {
-        addToBreadcrumbs(currentProject.id, item.id, itemType, item.title);
+        addToBreadcrumbs(currentProject.id, currentEditingItem.id, itemType, currentEditingItem.title);
     }
     
     // Populate editor
     setContent('editorTitle', `Edit ${itemType.charAt(0).toUpperCase() + itemType.slice(1)}`);
-    setValue('editorItemTitle', item.title || '');
+    setValue('editorItemTitle', currentEditingItem.title || '');
     
     // Show/hide fields based on item type
     const briefFields = getEl('briefFields');
@@ -3084,7 +3107,7 @@ function openItemEditor(item, itemType) {
         setDisplay('standardFields', 'none');
         
         // Handle backwards compatibility and set up rich text for client brief
-        setValue('editorProposition', item.proposition || '');
+        setValue('editorProposition', currentEditingItem.proposition || '');
         
         // Convert client brief to rich text editor
         const clientBriefField = getEl('editorClientBrief');
@@ -3100,13 +3123,13 @@ function openItemEditor(item, itemType) {
             clientBriefField.style.lineHeight = '1.5';
             
             // Set content - use rich content if available, otherwise convert plain text
-            if (item.clientBriefRich) {
-                clientBriefField.innerHTML = item.clientBriefRich;
-            } else if (item.clientBrief) {
-                clientBriefField.innerHTML = textToHtml(item.clientBrief);
-            } else if (item.content) {
+            if (currentEditingItem.clientBriefRich) {
+                clientBriefField.innerHTML = currentEditingItem.clientBriefRich;
+            } else if (currentEditingItem.clientBrief) {
+                clientBriefField.innerHTML = textToHtml(currentEditingItem.clientBrief);
+            } else if (currentEditingItem.content) {
                 // Backwards compatibility
-                clientBriefField.innerHTML = textToHtml(item.content);
+                clientBriefField.innerHTML = textToHtml(currentEditingItem.content);
             } else {
                 clientBriefField.innerHTML = '<p></p>';
             }
@@ -3126,15 +3149,15 @@ function openItemEditor(item, itemType) {
             setDisplay('richEditor', 'block');
             setDisplay('editorContent', 'none');
             // Use rich content if available, otherwise convert plain text to HTML
-            if (item.richContent) {
-                richEditor.innerHTML = item.richContent;
+            if (currentEditingItem.richContent) {
+                richEditor.innerHTML = currentEditingItem.richContent;
             } else {
-                richEditor.innerHTML = textToHtml(item.content || '');
+                richEditor.innerHTML = textToHtml(currentEditingItem.content || '');
             }
         } else {
             setDisplay('richEditor', 'none');
             setDisplay('editorContent', 'block');
-            setValue('editorContent', item.content || '');
+            setValue('editorContent', currentEditingItem.content || '');
         }
         
         // Show insert headings button only for notes
@@ -3188,7 +3211,7 @@ function openItemEditor(item, itemType) {
         const contextKey = `project-${currentProject.id}`;
         const existingContext = workContext.projectContexts.get(contextKey);
         if (existingContext && 
-            existingContext.itemId == item.id && 
+            existingContext.itemId == currentEditingItem.id && 
             existingContext.itemType == itemType &&
             existingContext.editorState) {
             
@@ -4824,8 +4847,41 @@ function autosaveItem() {
     const oldTitle = currentEditingItem.title;
     const titleChanged = oldTitle !== newTitle;
     
+    // CRITICAL: Find and update the actual item in the project arrays
+    let actualItem = null;
+    let itemArray = null;
+    
+    switch(currentEditingType) {
+        case 'brief':
+            itemArray = currentProject.briefs;
+            actualItem = currentProject.briefs.find(item => item.id === currentEditingItem.id);
+            break;
+        case 'note':
+            itemArray = currentProject.notes;
+            actualItem = currentProject.notes.find(item => item.id === currentEditingItem.id);
+            break;
+        case 'copy':
+            itemArray = currentProject.copy;
+            actualItem = currentProject.copy.find(item => item.id === currentEditingItem.id);
+            break;
+        case 'task':
+            itemArray = currentProject.tasks;
+            actualItem = currentProject.tasks.find(item => item.id === currentEditingItem.id);
+            break;
+    }
+    
+    if (!actualItem) {
+        console.error('Could not find actual item in project arrays');
+        updateAutosaveStatus('ready');
+        return;
+    }
+    
+    // Update both the editing item and the actual item
     currentEditingItem.title = newTitle;
-    currentEditingItem.lastModified = getCurrentTimestamp();
+    actualItem.title = newTitle;
+    actualItem.lastModified = getCurrentTimestamp();
+    
+    console.log(`Title updated: "${oldTitle}" → "${newTitle}"`);
     
     // Check if content has actually changed to trigger reordering
     let contentChanged = titleChanged;
@@ -4833,9 +4889,9 @@ function autosaveItem() {
     // Handle different item types
     if (currentEditingType === 'brief') {
         // Save brief-specific fields with rich text support
-        const oldProposition = currentEditingItem.proposition || '';
-        const oldClientBrief = currentEditingItem.clientBrief || '';
-        const oldClientBriefRich = currentEditingItem.clientBriefRich || '';
+        const oldProposition = actualItem.proposition || '';
+        const oldClientBrief = actualItem.clientBrief || '';
+        const oldClientBriefRich = actualItem.clientBriefRich || '';
         
         const newProposition = getValue('editorProposition');
         const clientBriefField = getEl('editorClientBrief');
@@ -4847,11 +4903,17 @@ function autosaveItem() {
                         (oldClientBrief !== newClientBrief) ||
                         (oldClientBriefRich !== newClientBriefRich);
         
+        // Update both items
         currentEditingItem.proposition = newProposition;
         currentEditingItem.clientBrief = newClientBrief;
         currentEditingItem.clientBriefRich = newClientBriefRich;
         
+        actualItem.proposition = newProposition;
+        actualItem.clientBrief = newClientBrief;
+        actualItem.clientBriefRich = newClientBriefRich;
+        
         // Remove old content field for cleanup
+        delete actualItem.content;
         delete currentEditingItem.content;
     } else {
         // Save content based on editor type
@@ -4860,31 +4922,36 @@ function autosaveItem() {
         
         if (richEditor && richEditor.style.display !== 'none') {
             // Rich text editor - convert HTML to text for storage
-            const oldContent = currentEditingItem.content || '';
+            const oldContent = actualItem.content || '';
             const newContent = htmlToText(richEditor.innerHTML);
             contentChanged = contentChanged || (oldContent !== newContent);
             
+            // Update both items
             currentEditingItem.content = newContent;
             currentEditingItem.richContent = richEditor.innerHTML;
+            actualItem.content = newContent;
+            actualItem.richContent = richEditor.innerHTML;
         } else if (textEditor) {
             // Plain text editor
-            const oldContent = currentEditingItem.content || '';
+            const oldContent = actualItem.content || '';
             const newContent = textEditor.value.trim();
             contentChanged = contentChanged || (oldContent !== newContent);
             
+            // Update both items
             currentEditingItem.content = newContent;
+            actualItem.content = newContent;
         }
     }
     
     // Update linked task names if title changed
     if (titleChanged && (currentEditingType === 'brief' || currentEditingType === 'note' || currentEditingType === 'copy')) {
-        console.log(`Title changed from "${oldTitle}" to "${newTitle}", updating linked tasks`);
-        updateLinkedTaskNames(currentEditingItem.id, currentEditingType, newTitle);
+        console.log(`Title changed, updating linked tasks for ${currentEditingType} ${actualItem.id}`);
+        updateLinkedTaskNames(actualItem.id, currentEditingType, newTitle);
     }
     
     // Move to top if content changed and we're actively editing
     if (contentChanged && currentProject) {
-        moveItemToTop(currentEditingItem, currentEditingType);
+        moveItemToTop(actualItem, currentEditingType);
     }
     
     saveProjects();
@@ -4897,29 +4964,28 @@ function autosaveItem() {
     hasUnsavedChanges = false;
     updateAutosaveStatus('saved');
     
-    // Re-render the appropriate panel to show changes
-    setTimeout(() => {
-        switch(currentEditingType) {
-            case 'brief':
-                renderBriefs();
-                break;
-            case 'note':
-                renderNotes();
-                break;
-            case 'copy':
-                renderCopy();
-                break;
-            case 'task':
-                renderProjectTasks();
-                break;
-        }
-        
-        // If title changed and there are linked tasks, also re-render tasks
-        if (titleChanged && (currentEditingType === 'brief' || currentEditingType === 'note' || currentEditingType === 'copy')) {
+    // Force immediate re-render to show changes
+    console.log('Re-rendering to show title changes');
+    switch(currentEditingType) {
+        case 'brief':
+            renderBriefs();
+            break;
+        case 'note':
+            renderNotes();
+            break;
+        case 'copy':
+            renderCopy();
+            break;
+        case 'task':
             renderProjectTasks();
-            renderGlobalTasks();
-        }
-    }, 100);
+            break;
+    }
+    
+    // If title changed and there are linked tasks, also re-render tasks
+    if (titleChanged && (currentEditingType === 'brief' || currentEditingType === 'note' || currentEditingType === 'copy')) {
+        renderProjectTasks();
+        renderGlobalTasks();
+    }
 }
 
 function moveItemToTop(item, itemType) {
@@ -5165,9 +5231,74 @@ function debugDragAndDrop() {
     }
 }
 
+function debugAutosave() {
+    console.log('🔍 Debugging autosave state:');
+    console.log('Current editing item:', currentEditingItem);
+    console.log('Current editing type:', currentEditingType);
+    console.log('Has unsaved changes:', hasUnsavedChanges);
+    
+    if (currentEditingItem && currentProject) {
+        // Find the actual item in arrays
+        let actualItem = null;
+        switch(currentEditingType) {
+            case 'brief':
+                actualItem = currentProject.briefs.find(item => item.id === currentEditingItem.id);
+                break;
+            case 'note':
+                actualItem = currentProject.notes.find(item => item.id === currentEditingItem.id);
+                break;
+            case 'copy':
+                actualItem = currentProject.copy.find(item => item.id === currentEditingItem.id);
+                break;
+            case 'task':
+                actualItem = currentProject.tasks.find(item => item.id === currentEditingItem.id);
+                break;
+        }
+        
+        console.log('Actual item in array:', actualItem);
+        console.log('Editing item reference same as array item?', currentEditingItem === actualItem);
+        
+        if (actualItem) {
+            console.log('Titles match?', currentEditingItem.title === actualItem.title);
+            console.log('Editing item title:', currentEditingItem.title);
+            console.log('Array item title:', actualItem.title);
+            console.log('Input field value:', getValue('editorItemTitle'));
+        }
+        
+        // Check for linked tasks
+        if (currentEditingType === 'brief' || currentEditingType === 'note' || currentEditingType === 'copy') {
+            const linkedTasks = currentProject.tasks.filter(task => 
+                task.sourceItemId == currentEditingItem.id && task.sourceItemType === currentEditingType
+            );
+            console.log(`Found ${linkedTasks.length} linked tasks:`, linkedTasks.map(t => t.title));
+        }
+    }
+}
+
+function testIncrementalNaming() {
+    console.log('🧪 Testing incremental naming:');
+    if (!currentProject) {
+        console.log('No current project');
+        return;
+    }
+    
+    console.log('Current notes:', currentProject.notes.map(n => n.title));
+    console.log('Current copy:', currentProject.copy.map(c => c.title));
+    
+    // Test note naming
+    const testNoteName = generateIncrementalName('Test Brief - note', 'note');
+    console.log('Test note name would be:', testNoteName);
+    
+    // Test copy naming
+    const testCopyName = generateIncrementalName('Test Brief - copy', 'copy');
+    console.log('Test copy name would be:', testCopyName);
+}
+
 // Add to window for debugging
 window.forceDropZoneReset = forceDropZoneReset;
 window.debugDragAndDrop = debugDragAndDrop;
+window.debugAutosave = debugAutosave;
+window.testIncrementalNaming = testIncrementalNaming;
 
 // ===== INITIALIZATION =====
 
@@ -5624,5 +5755,7 @@ console.log('• Renaming briefs/notes/copy automatically updates linked task na
 console.log('');
 console.log('TROUBLESHOOTING:');
 console.log('• If drag & drop stops working: forceDropZoneReset()');
-console.log('• To debug issues: debugDragAndDrop()');
+console.log('• To debug drag & drop issues: debugDragAndDrop()');
+console.log('• To debug title/autosave issues: debugAutosave()');
+console.log('• To test incremental naming: testIncrementalNaming()');
 console.log('• Auto-recovery runs every 30 seconds');
