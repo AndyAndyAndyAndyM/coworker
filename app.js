@@ -1304,18 +1304,49 @@ function removeFromBreadcrumbs(itemType, itemId) {
 // ===== DRAG AND DROP FUNCTIONS =====
 
 function handleDragStart(event) {
-    const itemElement = event.currentTarget;
-    const itemData = JSON.parse(itemElement.getAttribute('data-item'));
-    const itemType = itemElement.getAttribute('data-type');
-    
-    draggedItem = itemData;
-    draggedItemType = itemType;
-    
-    itemElement.classList.add('dragging');
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', '');
-    
-    console.log('Drag started:', itemType, itemData.title);
+    try {
+        const itemElement = event.currentTarget;
+        const itemDataString = itemElement.getAttribute('data-item');
+        const itemType = itemElement.getAttribute('data-type');
+        
+        if (!itemDataString || !itemType) {
+            console.error('Missing data-item or data-type attributes');
+            event.preventDefault();
+            return false;
+        }
+        
+        // Safely parse the item data
+        let itemData;
+        try {
+            itemData = JSON.parse(itemDataString);
+        } catch (parseError) {
+            console.error('Failed to parse item data:', parseError, itemDataString);
+            event.preventDefault();
+            return false;
+        }
+        
+        // Validate required properties
+        if (!itemData.id || !itemData.title) {
+            console.error('Invalid item data - missing id or title:', itemData);
+            event.preventDefault();
+            return false;
+        }
+        
+        draggedItem = itemData;
+        draggedItemType = itemType;
+        
+        itemElement.classList.add('dragging');
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', '');
+        
+        console.log('✓ Drag started:', itemType, itemData.title);
+        return true;
+        
+    } catch (error) {
+        console.error('Error in handleDragStart:', error);
+        event.preventDefault();
+        return false;
+    }
 }
 
 function handleDragEnd(event) {
@@ -1395,37 +1426,88 @@ function handleDrop(event, targetType) {
 
 // ===== PROJECT COLUMN DROP ZONES SETUP =====
 
+// Track which elements have listeners to prevent duplicates
+let elementsWithListeners = new Set();
+
 function setupProjectDropZones() {
-    const briefsColumn = getEl('briefsColumn');
-    const notesColumn = getEl('notesColumn');
-    const copyColumn = getEl('copyColumn');
-    const tasksColumn = getEl('tasksColumn');
+    console.log('Setting up project drop zones...');
     
-    // Set up drop zones for each column
-    const columns = [
-        { element: briefsColumn, type: 'brief', message: 'Drop here to create brief' },
-        { element: notesColumn, type: 'note', message: 'Drop here to create note' },
-        { element: copyColumn, type: 'copy', message: 'Drop here to create copy' },
-        { element: tasksColumn, type: 'task', message: 'Drop here to create task' }
-    ];
+    // Wait for DOM to be fully ready
+    setTimeout(() => {
+        const briefsColumn = getEl('briefsColumn');
+        const notesColumn = getEl('notesColumn');
+        const copyColumn = getEl('copyColumn');
+        const tasksColumn = getEl('tasksColumn');
+        
+        // Set up drop zones for each column
+        const columns = [
+            { element: briefsColumn, type: 'brief', message: 'Drop here to create brief' },
+            { element: notesColumn, type: 'note', message: 'Drop here to create note' },
+            { element: copyColumn, type: 'copy', message: 'Drop here to create copy' },
+            { element: tasksColumn, type: 'task', message: 'Drop here to create task' }
+        ];
+        
+        columns.forEach(({ element, type, message }) => {
+            if (element) {
+                const elementId = element.id || `${type}-column`;
+                
+                // Only set up if not already done
+                if (!elementsWithListeners.has(elementId)) {
+                    // Set data attributes
+                    element.setAttribute('data-drop-type', type);
+                    element.setAttribute('data-drop-message', message);
+                    
+                    // Create bound handlers to ensure proper cleanup
+                    const boundDragOver = handleColumnDragOver.bind(null);
+                    const boundDragLeave = handleColumnDragLeave.bind(null);
+                    const boundDrop = handleColumnDrop.bind(null);
+                    
+                    // Store handlers for cleanup
+                    element._dropHandlers = {
+                        dragover: boundDragOver,
+                        dragleave: boundDragLeave,
+                        drop: boundDrop
+                    };
+                    
+                    // Add event listeners
+                    element.addEventListener('dragover', boundDragOver);
+                    element.addEventListener('dragleave', boundDragLeave);
+                    element.addEventListener('drop', boundDrop);
+                    
+                    elementsWithListeners.add(elementId);
+                    console.log(`✓ Set up drop zone for ${type} column`);
+                } else {
+                    console.log(`⚠ Drop zone already exists for ${type} column`);
+                }
+            } else {
+                console.warn(`❌ Column element not found for ${type}`);
+            }
+        });
+        
+        console.log('Drop zones setup complete');
+    }, 50); // Small delay to ensure DOM is ready
+}
+
+function cleanupProjectDropZones() {
+    console.log('Cleaning up project drop zones...');
     
-    columns.forEach(({ element, type, message }) => {
-        if (element) {
-            // Set data attributes
-            element.setAttribute('data-drop-type', type);
-            element.setAttribute('data-drop-message', message);
+    const columns = ['briefsColumn', 'notesColumn', 'copyColumn', 'tasksColumn'];
+    
+    columns.forEach(columnId => {
+        const element = getEl(columnId);
+        if (element && element._dropHandlers) {
+            // Remove event listeners using stored handlers
+            element.removeEventListener('dragover', element._dropHandlers.dragover);
+            element.removeEventListener('dragleave', element._dropHandlers.dragleave);
+            element.removeEventListener('drop', element._dropHandlers.drop);
             
-            // Remove existing listeners to avoid duplicates
-            element.removeEventListener('dragover', handleColumnDragOver);
-            element.removeEventListener('dragleave', handleColumnDragLeave);
-            element.removeEventListener('drop', handleColumnDrop);
+            // Clean up stored handlers
+            delete element._dropHandlers;
             
-            // Add event listeners
-            element.addEventListener('dragover', handleColumnDragOver);
-            element.addEventListener('dragleave', handleColumnDragLeave);
-            element.addEventListener('drop', handleColumnDrop);
+            // Remove from tracking
+            elementsWithListeners.delete(columnId);
             
-            console.log(`Set up drop zone for ${type} column`);
+            console.log(`✓ Cleaned up ${columnId}`);
         }
     });
 }
@@ -3731,15 +3813,99 @@ function handleEnterKey(event, type) {
 function renderProject() {
     if (!currentProject) return;
     
+    console.log('Rendering project:', currentProject.name);
+    
+    // Clean up existing drop zones first
+    cleanupProjectDropZones();
+    
     renderBriefs();
     renderNotes();
     renderCopy();
     renderProjectTasks();
     
-    // Set up drop zones after rendering
+    // Set up drop zones after all rendering is complete
     setTimeout(() => {
         setupProjectDropZones();
-    }, 100);
+        
+        // Verify drop zones are working
+        setTimeout(() => {
+            validateDropZones();
+        }, 100);
+    }, 200); // Increased delay to ensure DOM is fully updated
+}
+
+function validateDropZones() {
+    const columns = ['briefsColumn', 'notesColumn', 'copyColumn', 'tasksColumn'];
+    let allValid = true;
+    
+    columns.forEach(columnId => {
+        const element = getEl(columnId);
+        if (element) {
+            const hasDropType = element.hasAttribute('data-drop-type');
+            const hasHandlers = element._dropHandlers ? true : false;
+            
+            if (!hasDropType || !hasHandlers) {
+                console.warn(`❌ Drop zone validation failed for ${columnId}:`, {
+                    hasDropType,
+                    hasHandlers
+                });
+                allValid = false;
+            }
+        } else {
+            console.warn(`❌ Column element not found: ${columnId}`);
+            allValid = false;
+        }
+    });
+    
+    if (allValid) {
+        console.log('✅ All drop zones validated successfully');
+    } else {
+        console.warn('⚠ Some drop zones failed validation, attempting to fix...');
+        // Try to fix by re-setting up drop zones
+        setTimeout(() => {
+            cleanupProjectDropZones();
+            setupProjectDropZones();
+        }, 100);
+    }
+}
+
+// Helper function to safely serialize item data
+function safeSerializeItem(item) {
+    try {
+        // Create a clean copy without circular references
+        const cleanItem = {
+            id: item.id,
+            title: item.title || '',
+            type: item.type || '',
+            content: item.content || '',
+            richContent: item.richContent || '',
+            proposition: item.proposition || '',
+            clientBrief: item.clientBrief || '',
+            clientBriefRich: item.clientBriefRich || '',
+            linkedBriefId: item.linkedBriefId || null,
+            linkColor: item.linkColor || null,
+            sourceItemId: item.sourceItemId || null,
+            sourceItemType: item.sourceItemType || null,
+            completed: item.completed || false,
+            order: item.order || 0,
+            createdAt: item.createdAt || getCurrentTimestamp()
+        };
+        
+        // Test serialization
+        const serialized = JSON.stringify(cleanItem);
+        
+        // Escape quotes for HTML attribute
+        return serialized.replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+        
+    } catch (error) {
+        console.error('Failed to serialize item:', error, item);
+        // Return minimal safe data
+        return JSON.stringify({
+            id: item.id || generateId(),
+            title: item.title || 'Untitled',
+            type: item.type || 'unknown'
+        }).replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+    }
 }
 
 function renderProjectOverview() {
@@ -3822,6 +3988,11 @@ function renderProjectOverview() {
 
 function renderBriefs() {
     const list = getEl('briefsList');
+    if (!list) {
+        console.warn('briefsList element not found');
+        return;
+    }
+    
     if (!currentProject.briefs) currentProject.briefs = [];
     
     // Ensure briefs have order values
@@ -3829,89 +4000,104 @@ function renderBriefs() {
         if (brief.order === undefined) {
             brief.order = index;
         }
+        // Ensure required properties exist
+        if (!brief.id) brief.id = generateId();
+        if (!brief.title) brief.title = 'Untitled Brief';
+        if (!brief.createdAt) brief.createdAt = getCurrentTimestamp();
     });
     
     // Sort briefs by order
     const sortedBriefs = [...currentProject.briefs].sort((a, b) => (a.order || 0) - (b.order || 0));
     
-    list.innerHTML = sortedBriefs.map(brief => {
-        const linkedCount = getLinkedItemsCount(brief.id);
-        
-        // Assign link color if not already assigned (for backwards compatibility)
-        if (!brief.linkColor) {
-            brief.linkColor = getNextLinkColor();
-            // Only save if we actually assigned a new color
-            setTimeout(() => saveProjects(), 0);
-        }
-        
-        // Use the brief's assigned color always (not just when linked)
-        const borderColor = brief.linkColor || '#a3a3a3';
-        
-        // Handle backwards compatibility and rich text content
-        const proposition = brief.proposition || '';
-        const clientBrief = brief.clientBrief || brief.content || '';
-        const clientBriefRich = brief.clientBriefRich || '';
-        const hasProposition = proposition.trim().length > 0;
-        const hasClientBrief = clientBrief.trim().length > 0 || clientBriefRich.trim().length > 0;
-        
-        // Get preview content - prefer rich content, fallback to plain text
-        let clientBriefPreview = '';
-        if (clientBriefRich && clientBriefRich.trim()) {
-            // Convert rich content to plain text for preview
-            clientBriefPreview = truncateContent(htmlToText(clientBriefRich), 120);
-        } else if (clientBrief) {
-            clientBriefPreview = truncateContent(clientBrief, 120);
-        }
-        
-        return `
-            <div class="item brief-item sortable-item ${linkedCount > 0 ? 'linked-item' : ''}" 
-                 draggable="true"
-                 data-item='${JSON.stringify(brief).replace(/'/g, '&#39;')}'
-                 data-type="brief"
-                 ondragstart="handleDragStart(event)"
-                 ondragend="handleDragEnd(event)"
-                 ondblclick="openItemEditor(findItem('${brief.id}', 'brief'), 'brief')"
-                 style="border-left: 3px solid ${borderColor};">
-                <div class="grab-handle"></div>
-                <div class="item-type type-brief">Brief</div>
-                <div class="item-header">
-                    <div class="item-title">${brief.title}</div>
-                </div>
-                <div class="item-meta">
-                    Created: ${formatDate(brief.createdAt)}
-                    ${linkedCount > 0 ? ` • ${linkedCount} linked item${linkedCount > 1 ? 's' : ''}` : ''}
-                    ${clientBriefRich ? ' • Rich text' : ''}
-                </div>
-                
-                ${hasProposition ? `
-                    <div style="margin: 8px 0; padding: 8px; background: #f0f9ff; border-left: 3px solid #0ea5e9; border-radius: 4px;">
-                        <div style="font-size: 11px; font-weight: 600; color: #0369a1; text-transform: uppercase; margin-bottom: 4px;">Proposition</div>
-                        <div style="color: #525252; line-height: 1.4; font-size: 13px;">
-                            ${truncateContent(proposition, 120)}
+    try {
+        list.innerHTML = sortedBriefs.map(brief => {
+            const linkedCount = getLinkedItemsCount(brief.id);
+            
+            // Assign link color if not already assigned (for backwards compatibility)
+            if (!brief.linkColor) {
+                brief.linkColor = getNextLinkColor();
+                // Only save if we actually assigned a new color
+                setTimeout(() => saveProjects(), 0);
+            }
+            
+            // Use the brief's assigned color always (not just when linked)
+            const borderColor = brief.linkColor || '#a3a3a3';
+            
+            // Handle backwards compatibility and rich text content
+            const proposition = brief.proposition || '';
+            const clientBrief = brief.clientBrief || brief.content || '';
+            const clientBriefRich = brief.clientBriefRich || '';
+            const hasProposition = proposition.trim().length > 0;
+            const hasClientBrief = clientBrief.trim().length > 0 || clientBriefRich.trim().length > 0;
+            
+            // Get preview content - prefer rich content, fallback to plain text
+            let clientBriefPreview = '';
+            if (clientBriefRich && clientBriefRich.trim()) {
+                // Convert rich content to plain text for preview
+                clientBriefPreview = truncateContent(htmlToText(clientBriefRich), 120);
+            } else if (clientBrief) {
+                clientBriefPreview = truncateContent(clientBrief, 120);
+            }
+            
+            // Safely serialize the brief data
+            const serializedBrief = safeSerializeItem(brief);
+            
+            return `
+                <div class="item brief-item sortable-item ${linkedCount > 0 ? 'linked-item' : ''}" 
+                     draggable="true"
+                     data-item="${serializedBrief}"
+                     data-type="brief"
+                     ondragstart="handleDragStart(event)"
+                     ondragend="handleDragEnd(event)"
+                     ondblclick="openItemEditor(findItem('${brief.id}', 'brief'), 'brief')"
+                     style="border-left: 3px solid ${borderColor};">
+                    <div class="grab-handle"></div>
+                    <div class="item-type type-brief">Brief</div>
+                    <div class="item-header">
+                        <div class="item-title">${brief.title}</div>
+                    </div>
+                    <div class="item-meta">
+                        Created: ${formatDate(brief.createdAt)}
+                        ${linkedCount > 0 ? ` • ${linkedCount} linked item${linkedCount > 1 ? 's' : ''}` : ''}
+                        ${clientBriefRich ? ' • Rich text' : ''}
+                    </div>
+                    
+                    ${hasProposition ? `
+                        <div style="margin: 8px 0; padding: 8px; background: #f0f9ff; border-left: 3px solid #0ea5e9; border-radius: 4px;">
+                            <div style="font-size: 11px; font-weight: 600; color: #0369a1; text-transform: uppercase; margin-bottom: 4px;">Proposition</div>
+                            <div style="color: #525252; line-height: 1.4; font-size: 13px;">
+                                ${truncateContent(proposition, 120)}
+                            </div>
                         </div>
-                    </div>
-                ` : ''}
-                
-                ${hasClientBrief ? `
-                    <div style="margin: 8px 0; padding: 8px; background: #fefce8; border-left: 3px solid #eab308; border-radius: 4px;">
-                        <div style="font-size: 11px; font-weight: 600; color: #a16207; text-transform: uppercase; margin-bottom: 4px;">Client Brief ${clientBriefRich ? '(Rich Text)' : ''}</div>
-                        <div style="color: #525252; line-height: 1.4; font-size: 13px;">
-                            ${clientBriefPreview}
+                    ` : ''}
+                    
+                    ${hasClientBrief ? `
+                        <div style="margin: 8px 0; padding: 8px; background: #fefce8; border-left: 3px solid #eab308; border-radius: 4px;">
+                            <div style="font-size: 11px; font-weight: 600; color: #a16207; text-transform: uppercase; margin-bottom: 4px;">Client Brief ${clientBriefRich ? '(Rich Text)' : ''}</div>
+                            <div style="color: #525252; line-height: 1.4; font-size: 13px;">
+                                ${clientBriefPreview}
+                            </div>
                         </div>
+                    ` : ''}
+                    
+                    <div class="item-actions">
+                        <div style="font-size: 11px; color: #a3a3a3; font-style: italic; flex: 1;">
+                            Double-click to edit • Drag to create linked items
+                        </div>
+                        <button class="delete-btn" data-delete-type="brief" data-delete-id="${brief.id}">
+                            ×
+                        </button>
                     </div>
-                ` : ''}
-                
-                <div class="item-actions">
-                    <div style="font-size: 11px; color: #a3a3a3; font-style: italic; flex: 1;">
-                        Double-click to edit • Drag to create linked items
-                    </div>
-                    <button class="delete-btn" data-delete-type="brief" data-delete-id="${brief.id}">
-                        ×
-                    </button>
                 </div>
-            </div>
-        `;
-    }).join('');
+            `;
+        }).join('');
+        
+        console.log(`✓ Rendered ${sortedBriefs.length} briefs`);
+        
+    } catch (error) {
+        console.error('Error rendering briefs:', error);
+        list.innerHTML = '<div style="padding: 20px; color: #ef4444;">Error rendering briefs. Please refresh the page.</div>';
+    }
 }
 
 function renderNotes() {
@@ -4885,10 +5071,85 @@ function migrateBriefsToRichText() {
     }
 }
 
+// ===== ERROR RECOVERY AND DEBUGGING =====
+
+function forceDropZoneReset() {
+    console.log('🔧 Forcing drop zone reset...');
+    
+    // Clear all tracking
+    elementsWithListeners.clear();
+    
+    // Clean up everything
+    cleanupProjectDropZones();
+    
+    // Wait a bit then re-setup
+    setTimeout(() => {
+        setupProjectDropZones();
+        showNotification('Drop zones reset - try dragging again');
+    }, 100);
+}
+
+function debugDragAndDrop() {
+    console.log('🔍 Debugging drag and drop state:');
+    console.log('Current project:', currentProject?.name);
+    console.log('Elements with listeners:', Array.from(elementsWithListeners));
+    console.log('Dragged item:', draggedItem);
+    console.log('Dragged item type:', draggedItemType);
+    
+    // Check each column
+    const columns = ['briefsColumn', 'notesColumn', 'copyColumn', 'tasksColumn'];
+    columns.forEach(columnId => {
+        const element = getEl(columnId);
+        if (element) {
+            console.log(`${columnId}:`, {
+                exists: true,
+                hasDropType: element.hasAttribute('data-drop-type'),
+                dropType: element.getAttribute('data-drop-type'),
+                hasHandlers: !!element._dropHandlers,
+                tracked: elementsWithListeners.has(columnId)
+            });
+        } else {
+            console.log(`${columnId}:`, { exists: false });
+        }
+    });
+    
+    // Check draggable items
+    const draggableItems = document.querySelectorAll('[draggable="true"]');
+    console.log(`Found ${draggableItems.length} draggable items`);
+    
+    let itemsWithIssues = 0;
+    draggableItems.forEach((item, index) => {
+        const hasDataItem = item.hasAttribute('data-item');
+        const hasDataType = item.hasAttribute('data-type');
+        
+        if (!hasDataItem || !hasDataType) {
+            console.warn(`Item ${index} missing data:`, {
+                hasDataItem,
+                hasDataType,
+                element: item
+            });
+            itemsWithIssues++;
+        }
+    });
+    
+    console.log(`Items with issues: ${itemsWithIssues}`);
+    
+    if (itemsWithIssues > 0) {
+        console.log('🔧 Re-rendering project to fix item issues...');
+        renderProject();
+    }
+}
+
+// Add to window for debugging
+window.forceDropZoneReset = forceDropZoneReset;
+window.debugDragAndDrop = debugDragAndDrop;
+
 // ===== INITIALIZATION =====
 
 function initializeApp() {
     try {
+        console.log('🚀 Initializing Creative Project Manager...');
+        
         // Load work context first
         loadWorkContext();
         
@@ -5004,8 +5265,35 @@ function initializeApp() {
         // Setup delete button event listeners
         setupDeleteListeners();
         
-        // Setup project column drop zones
-        setupProjectDropZones();
+        // Setup project column drop zones - with retry mechanism
+        let dropZoneAttempts = 0;
+        const maxAttempts = 3;
+        
+        const attemptDropZoneSetup = () => {
+            dropZoneAttempts++;
+            console.log(`Setting up drop zones (attempt ${dropZoneAttempts}/${maxAttempts})`);
+            
+            setupProjectDropZones();
+            
+            // Validate after setup
+            setTimeout(() => {
+                const columns = ['briefsColumn', 'notesColumn', 'copyColumn', 'tasksColumn'];
+                const workingColumns = columns.filter(id => {
+                    const element = getEl(id);
+                    return element && element.hasAttribute('data-drop-type') && element._dropHandlers;
+                });
+                
+                if (workingColumns.length < columns.length && dropZoneAttempts < maxAttempts) {
+                    console.warn(`Only ${workingColumns.length}/${columns.length} drop zones working, retrying...`);
+                    setTimeout(attemptDropZoneSetup, 500);
+                } else {
+                    console.log(`✅ Drop zone setup complete: ${workingColumns.length}/${columns.length} working`);
+                }
+            }, 200);
+        };
+        
+        // Initial setup
+        setTimeout(attemptDropZoneSetup, 100);
         
         // Render breadcrumbs
         renderBreadcrumbs();
@@ -5015,13 +5303,31 @@ function initializeApp() {
             cleanupOldCompletedTasks();
         }, 60 * 60 * 1000); // Run every hour
         
+        // Set up periodic drop zone health check (every 30 seconds)
+        setInterval(() => {
+            if (currentProject) {
+                const columns = ['briefsColumn', 'notesColumn', 'copyColumn', 'tasksColumn'];
+                const brokenColumns = columns.filter(id => {
+                    const element = getEl(id);
+                    return element && (!element.hasAttribute('data-drop-type') || !element._dropHandlers);
+                });
+                
+                if (brokenColumns.length > 0) {
+                    console.warn(`🔧 Detected broken drop zones: ${brokenColumns.join(', ')}, fixing...`);
+                    forceDropZoneReset();
+                }
+            }
+        }, 30000);
+        
         // Offer work resumption after a short delay
         setTimeout(() => {
             offerWorkResumption();
         }, 2000);
         
+        console.log('✅ Creative Project Manager initialized successfully');
+        
     } catch (error) {
-        console.error('Error during initialization:', error);
+        console.error('❌ Error during initialization:', error);
         // Fallback initialization
         projects = [];
         initializeLinkColorIndex();
@@ -5030,8 +5336,15 @@ function initializeApp() {
         showProjectOverview();
         updateSettingsButton();
         setupDeleteListeners();
-        setupProjectDropZones();
+        
+        // Still try to setup drop zones
+        setTimeout(() => {
+            setupProjectDropZones();
+        }, 1000);
+        
         renderBreadcrumbs();
+        
+        showNotification('App loaded with some issues - drag & drop might need a refresh');
     }
 }
 
@@ -5273,3 +5586,8 @@ console.log('• Drag briefs → notes/copy to create linked items');
 console.log('• Drag notes/copy → tasks to create tasks');
 console.log('• Drag within same column to reorder');
 console.log('• Drag notes ↔ copy to move between columns');
+console.log('');
+console.log('TROUBLESHOOTING:');
+console.log('• If drag & drop stops working: forceDropZoneReset()');
+console.log('• To debug issues: debugDragAndDrop()');
+console.log('• Auto-recovery runs every 30 seconds');
