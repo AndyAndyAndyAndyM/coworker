@@ -3108,8 +3108,370 @@ function createProject() {
         // Clear form
         setValue('newProjectName', '');
         setValue('newProjectDescription', '');
+        clearProjectImportZone();
         
         renderProjectOverview();
+        showNotification(`Project "${name}" created successfully!`);
+    }
+}
+
+// ===== PROJECT IMPORT FUNCTIONALITY =====
+
+function setupProjectImportZone() {
+    const projectModal = getEl('projectModal');
+    if (!projectModal) return;
+    
+    // Check if import zone already exists
+    const existingZone = projectModal.querySelector('.project-import-zone');
+    if (existingZone) {
+        console.log('Project import zone already exists');
+        return;
+    }
+    
+    // Find the project form
+    const formContainer = projectModal.querySelector('.modal-content') || projectModal;
+    
+    // Create import zone
+    const importZone = document.createElement('div');
+    importZone.className = 'project-import-zone';
+    importZone.style.cssText = `
+        border: 2px dashed #d1d5db;
+        border-radius: 8px;
+        padding: 30px;
+        margin: 20px 0;
+        text-align: center;
+        color: #6b7280;
+        background: #f9fafb;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        position: relative;
+    `;
+    
+    const isLibraryAvailable = mammothLibrary !== null;
+    importZone.innerHTML = `
+        <div style="font-size: 16px; margin-bottom: 8px;">📄 ${isLibraryAvailable ? 'Import Project from Word Document' : 'Document import not available'}</div>
+        <div style="font-size: 13px; opacity: 0.8; margin-bottom: 12px;">${isLibraryAvailable ? 'Drop a .docx file here or click to browse' : 'Document processing library required'}</div>
+        <div style="font-size: 12px; opacity: 0.6;">The document will be analyzed and content will be organized into briefs, notes, and copy automatically</div>
+        ${isLibraryAvailable ? '<input type="file" accept=".docx,.doc" style="display: none;" class="project-import-input">' : ''}
+    `;
+    
+    // Only add functionality if library is available
+    if (!isLibraryAvailable) {
+        importZone.style.opacity = '0.5';
+        importZone.style.cursor = 'not-allowed';
+        importZone.title = 'Document processing not available in this environment';
+    } else {
+        const fileInput = importZone.querySelector('.project-import-input');
+        
+        // Handle click to browse
+        importZone.addEventListener('click', () => {
+            fileInput.click();
+        });
+        
+        // Handle file selection
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                processProjectImportDocument(file);
+            }
+        });
+        
+        // Handle drag and drop
+        importZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            importZone.style.borderColor = '#3b82f6';
+            importZone.style.background = '#eff6ff';
+        });
+        
+        importZone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            importZone.style.borderColor = '#d1d5db';
+            importZone.style.background = '#f9fafb';
+        });
+        
+        importZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            importZone.style.borderColor = '#d1d5db';
+            importZone.style.background = '#f9fafb';
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                if (file.name.endsWith('.docx') || file.name.endsWith('.doc')) {
+                    processProjectImportDocument(file);
+                } else {
+                    showNotification('Please select a .docx or .doc file');
+                }
+            }
+        });
+    }
+    
+    // Insert after the description field
+    const descField = formContainer.querySelector('#newProjectDescription');
+    if (descField && descField.parentNode) {
+        descField.parentNode.insertBefore(importZone, descField.nextSibling);
+    }
+}
+
+async function processProjectImportDocument(file) {
+    try {
+        showNotification('Analyzing document for project import...');
+        
+        if (!mammothLibrary) {
+            throw new Error('Document processing library not available');
+        }
+        
+        // Read file as array buffer
+        const arrayBuffer = await file.arrayBuffer();
+        
+        // Extract HTML content
+        const result = await mammothLibrary.convertToHtml({arrayBuffer: arrayBuffer});
+        
+        if (result.value && result.value.trim()) {
+            // Parse the document and extract structured content
+            const projectData = parseDocumentForProject(result.value, file.name);
+            
+            // Populate the form with extracted data
+            populateProjectForm(projectData);
+            
+            showNotification(`Document processed! Found ${projectData.briefs.length} potential briefs, ${projectData.notes.length} notes, and ${projectData.copy.length} copy items.`);
+        } else {
+            showNotification('No content found in document');
+        }
+        
+    } catch (error) {
+        console.error('Error processing import document:', error);
+        showNotification('Error processing document. Please try again or create project manually.');
+    }
+}
+
+function parseDocumentForProject(html, fileName) {
+    // Create a temporary div to parse the HTML
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = html;
+    
+    // Extract project name from filename or first heading
+    let projectName = fileName.replace(/\.(docx?|doc)$/i, '').replace(/[_-]/g, ' ');
+    const firstHeading = tempDiv.querySelector('h1, h2, h3');
+    if (firstHeading && firstHeading.textContent.trim()) {
+        projectName = firstHeading.textContent.trim();
+        firstHeading.remove(); // Remove so it's not processed again
+    }
+    
+    // Initialize collections
+    const projectData = {
+        name: projectName,
+        description: 'Imported from Word document',
+        briefs: [],
+        notes: [],
+        copy: []
+    };
+    
+    // Get all content sections
+    const sections = extractDocumentSections(tempDiv);
+    
+    // Analyze and categorize sections
+    sections.forEach(section => {
+        const category = categorizeSection(section);
+        const item = {
+            id: generateId(),
+            title: section.title || 'Untitled',
+            content: section.content || '',
+            createdAt: getCurrentTimestamp(),
+            order: 0
+        };
+        
+        switch(category) {
+            case 'brief':
+                // Try to split content into proposition and client brief
+                const briefParts = splitBriefContent(section.content);
+                item.proposition = briefParts.proposition;
+                item.clientBrief = briefParts.clientBrief;
+                item.clientBriefRich = briefParts.clientBriefRich;
+                item.linkColor = getNextLinkColor();
+                item.type = 'brief';
+                delete item.content; // Briefs don't use generic content
+                projectData.briefs.push(item);
+                break;
+                
+            case 'note':
+                item.richContent = section.richContent || textToHtml(section.content);
+                item.type = 'note';
+                projectData.notes.push(item);
+                break;
+                
+            case 'copy':
+                item.richContent = section.richContent || textToHtml(section.content);
+                item.type = 'copy';
+                projectData.copy.push(item);
+                break;
+        }
+    });
+    
+    return projectData;
+}
+
+function extractDocumentSections(container) {
+    const sections = [];
+    const headings = container.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    
+    if (headings.length === 0) {
+        // No headings found, treat as single section
+        const content = container.innerHTML.trim();
+        const textContent = container.textContent.trim();
+        if (textContent) {
+            sections.push({
+                title: 'Imported Content',
+                content: htmlToText(content),
+                richContent: content
+            });
+        }
+        return sections;
+    }
+    
+    headings.forEach((heading, index) => {
+        const title = heading.textContent.trim();
+        let content = '';
+        let richContent = '';
+        
+        // Get content between this heading and the next
+        let currentElement = heading.nextElementSibling;
+        const nextHeading = headings[index + 1];
+        
+        while (currentElement && currentElement !== nextHeading) {
+            richContent += currentElement.outerHTML;
+            content += currentElement.textContent + '\n';
+            currentElement = currentElement.nextElementSibling;
+        }
+        
+        if (title && (content.trim() || richContent.trim())) {
+            sections.push({
+                title: title,
+                content: content.trim(),
+                richContent: richContent.trim()
+            });
+        }
+    });
+    
+    return sections;
+}
+
+function categorizeSection(section) {
+    const title = section.title.toLowerCase();
+    const content = section.content.toLowerCase();
+    
+    // Keywords that suggest different content types
+    const briefKeywords = ['brief', 'proposal', 'proposition', 'project brief', 'creative brief', 'brand brief'];
+    const noteKeywords = ['notes', 'research', 'insights', 'analysis', 'thinking', 'ideas', 'brainstorm'];
+    const copyKeywords = ['copy', 'content', 'text', 'headline', 'tagline', 'script', 'writing'];
+    
+    // Check title first
+    if (briefKeywords.some(keyword => title.includes(keyword))) {
+        return 'brief';
+    }
+    if (noteKeywords.some(keyword => title.includes(keyword))) {
+        return 'note';
+    }
+    if (copyKeywords.some(keyword => title.includes(keyword))) {
+        return 'copy';
+    }
+    
+    // Check content for clues
+    if (content.includes('proposition') || content.includes('objective') || content.includes('target audience')) {
+        return 'brief';
+    }
+    if (content.includes('insight') || content.includes('research') || content.includes('analysis')) {
+        return 'note';
+    }
+    
+    // Default categorization based on content length and structure
+    if (section.content.length < 500) {
+        return 'copy'; // Shorter content likely to be copy
+    } else {
+        return 'note'; // Longer content likely to be notes
+    }
+}
+
+function splitBriefContent(content) {
+    const lines = content.split('\n').filter(line => line.trim());
+    let proposition = '';
+    let clientBrief = '';
+    
+    // Look for proposition markers
+    const propMarkers = ['proposition:', 'prop:', 'objective:', 'goal:'];
+    let propIndex = -1;
+    
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].toLowerCase();
+        if (propMarkers.some(marker => line.includes(marker))) {
+            propIndex = i;
+            break;
+        }
+    }
+    
+    if (propIndex >= 0) {
+        // Found proposition marker
+        const propLine = lines[propIndex];
+        const colonIndex = propLine.indexOf(':');
+        if (colonIndex >= 0) {
+            proposition = propLine.substring(colonIndex + 1).trim();
+        }
+        
+        // Everything else is client brief
+        const otherLines = [...lines.slice(0, propIndex), ...lines.slice(propIndex + 1)];
+        clientBrief = otherLines.join('\n');
+    } else {
+        // No clear proposition found, put everything in client brief
+        clientBrief = content;
+    }
+    
+    return {
+        proposition: proposition,
+        clientBrief: clientBrief,
+        clientBriefRich: textToHtml(clientBrief)
+    };
+}
+
+function populateProjectForm(projectData) {
+    // Set project name and description
+    setValue('newProjectName', projectData.name);
+    setValue('newProjectDescription', projectData.description);
+    
+    // Store the parsed data for when the project is created
+    window.pendingProjectImport = projectData;
+    
+    // Update the import zone to show success
+    const importZone = document.querySelector('.project-import-zone');
+    if (importZone) {
+        importZone.style.borderColor = '#16a34a';
+        importZone.style.background = '#f0fdf4';
+        importZone.innerHTML = `
+            <div style="color: #16a34a; font-size: 16px; margin-bottom: 8px;">✅ Document Imported Successfully!</div>
+            <div style="font-size: 13px; opacity: 0.8;">
+                Found: ${projectData.briefs.length} briefs, ${projectData.notes.length} notes, ${projectData.copy.length} copy items
+            </div>
+            <div style="font-size: 12px; opacity: 0.6; margin-top: 8px;">
+                Click "Create Project" to proceed with the imported content
+            </div>
+        `;
+    }
+}
+
+function clearProjectImportZone() {
+    window.pendingProjectImport = null;
+    
+    const importZone = document.querySelector('.project-import-zone');
+    if (importZone) {
+        importZone.style.borderColor = '#d1d5db';
+        importZone.style.background = '#f9fafb';
+        
+        const isLibraryAvailable = mammothLibrary !== null;
+        importZone.innerHTML = `
+            <div style="font-size: 16px; margin-bottom: 8px;">📄 ${isLibraryAvailable ? 'Import Project from Word Document' : 'Document import not available'}</div>
+            <div style="font-size: 13px; opacity: 0.8; margin-bottom: 12px;">${isLibraryAvailable ? 'Drop a .docx file here or click to browse' : 'Document processing library required'}</div>
+            <div style="font-size: 12px; opacity: 0.6;">The document will be analyzed and content will be organized into briefs, notes, and copy automatically</div>
+            ${isLibraryAvailable ? '<input type="file" accept=".docx,.doc" style="display: none;" class="project-import-input">' : ''}
+        `;
     }
 }
 
@@ -3826,6 +4188,273 @@ function saveProjectSettings() {
         
         renderProjectOverview();
         window.currentSettingsProject = null;
+    }
+}
+
+// ===== PROJECT EXPORT FUNCTIONALITY =====
+
+function exportProjectAsWord() {
+    const project = window.currentSettingsProject;
+    if (!project) return;
+    
+    try {
+        showNotification('Generating project export...');
+        
+        // Generate HTML content for the entire project
+        const projectHtml = generateProjectHtml(project);
+        
+        // Create a downloadable HTML file (Word-compatible)
+        const blob = new Blob([projectHtml], { type: 'application/msword' });
+        const url = URL.createObjectURL(blob);
+        
+        // Create download link
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${project.name.replace(/[^a-z0-9]/gi, '_')}_Export.doc`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Clean up
+        URL.revokeObjectURL(url);
+        
+        showNotification('Project exported successfully!');
+    } catch (error) {
+        console.error('Export error:', error);
+        showNotification('Export failed. Please try again.');
+    }
+}
+
+function generateProjectHtml(project) {
+    const createdDate = project.createdAt ? formatDate(project.createdAt) : 'Unknown';
+    
+    // Count stats
+    const briefsCount = project.briefs ? project.briefs.length : 0;
+    const notesCount = project.notes ? project.notes.length : 0;
+    const copyCount = project.copy ? project.copy.length : 0;
+    const totalTasks = project.tasks ? project.tasks.length : 0;
+    const completedTasks = project.tasks ? project.tasks.filter(t => t.completed).length : 0;
+    
+    let html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>${project.name} - Project Export</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; margin: 40px; }
+        h1 { color: #333; border-bottom: 3px solid #007acc; padding-bottom: 10px; }
+        h2 { color: #555; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-top: 30px; }
+        h3 { color: #666; margin-top: 25px; }
+        .project-stats { background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0; }
+        .item-section { margin: 20px 0; padding: 15px; border-left: 4px solid #007acc; background: #fafafa; }
+        .proposition { background: #e8f4fd; padding: 10px; border-left: 3px solid #007acc; margin: 10px 0; }
+        .client-brief { background: #fff9e6; padding: 10px; border-left: 3px solid #ffa500; margin: 10px 0; }
+        .task-list { margin: 10px 0; }
+        .task-item { margin: 5px 0; padding: 5px; background: white; border-left: 2px solid #28a745; }
+        .task-completed { text-decoration: line-through; opacity: 0.7; }
+        .linked-indicator { color: #007acc; font-style: italic; font-size: 0.9em; }
+        .meta-info { color: #666; font-size: 0.9em; margin: 5px 0; }
+        page-break-before: always;
+    </style>
+</head>
+<body>
+    <h1>${project.name}</h1>
+    
+    <div class="project-stats">
+        <strong>Project Overview</strong><br>
+        Created: ${createdDate}<br>
+        Description: ${project.description || 'No description provided'}<br><br>
+        
+        <strong>Content Summary:</strong><br>
+        • ${briefsCount} Brief${briefsCount !== 1 ? 's' : ''}<br>
+        • ${notesCount} Note${notesCount !== 1 ? 's' : ''}<br>
+        • ${copyCount} Copy item${copyCount !== 1 ? 's' : ''}<br>
+        • ${totalTasks} Task${totalTasks !== 1 ? 's' : ''} (${completedTasks} completed)<br>
+    </div>
+`;
+
+    // Export Briefs
+    if (project.briefs && project.briefs.length > 0) {
+        html += `<h2>Briefs (${project.briefs.length})</h2>`;
+        
+        project.briefs.forEach(brief => {
+            const linkedItems = getLinkedItemsForBrief(project, brief.id);
+            
+            html += `<div class="item-section">`;
+            html += `<h3>${brief.title}</h3>`;
+            html += `<div class="meta-info">Created: ${formatDate(brief.createdAt)}</div>`;
+            
+            if (brief.proposition && brief.proposition.trim()) {
+                html += `<div class="proposition"><strong>Proposition:</strong><br>${brief.proposition.replace(/\n/g, '<br>')}</div>`;
+            }
+            
+            if (brief.clientBriefRich && brief.clientBriefRich.trim()) {
+                html += `<div class="client-brief"><strong>Client Brief:</strong><br>${brief.clientBriefRich}</div>`;
+            } else if (brief.clientBrief && brief.clientBrief.trim()) {
+                html += `<div class="client-brief"><strong>Client Brief:</strong><br>${brief.clientBrief.replace(/\n/g, '<br>')}</div>`;
+            }
+            
+            if (linkedItems.notes.length > 0 || linkedItems.copy.length > 0) {
+                html += `<div class="linked-indicator">Linked Items: `;
+                const linkedDesc = [];
+                if (linkedItems.notes.length > 0) linkedDesc.push(`${linkedItems.notes.length} note${linkedItems.notes.length !== 1 ? 's' : ''}`);
+                if (linkedItems.copy.length > 0) linkedDesc.push(`${linkedItems.copy.length} copy item${linkedItems.copy.length !== 1 ? 's' : ''}`);
+                html += linkedDesc.join(', ') + `</div>`;
+            }
+            
+            html += `</div>`;
+        });
+    }
+    
+    // Export Notes
+    if (project.notes && project.notes.length > 0) {
+        html += `<h2>Notes (${project.notes.length})</h2>`;
+        
+        project.notes.forEach(note => {
+            const linkedBrief = note.linkedBriefId ? project.briefs.find(b => b.id === note.linkedBriefId) : null;
+            const linkedTasks = project.tasks ? project.tasks.filter(t => t.sourceItemType === 'note' && t.sourceItemId === note.id) : [];
+            
+            html += `<div class="item-section">`;
+            html += `<h3>${note.title}</h3>`;
+            html += `<div class="meta-info">Created: ${formatDate(note.createdAt)}</div>`;
+            
+            if (linkedBrief) {
+                html += `<div class="linked-indicator">Linked to brief: "${linkedBrief.title}"</div>`;
+            }
+            
+            if (note.richContent && note.richContent.trim()) {
+                html += `<div>${note.richContent}</div>`;
+            } else if (note.content && note.content.trim()) {
+                html += `<div>${note.content.replace(/\n/g, '<br>')}</div>`;
+            }
+            
+            if (linkedTasks.length > 0) {
+                html += `<div class="task-list"><strong>Related Tasks:</strong>`;
+                linkedTasks.forEach(task => {
+                    html += `<div class="task-item ${task.completed ? 'task-completed' : ''}">• ${task.title}</div>`;
+                });
+                html += `</div>`;
+            }
+            
+            html += `</div>`;
+        });
+    }
+    
+    // Export Copy
+    if (project.copy && project.copy.length > 0) {
+        html += `<h2>Copy (${project.copy.length})</h2>`;
+        
+        project.copy.forEach(copy => {
+            const linkedBrief = copy.linkedBriefId ? project.briefs.find(b => b.id === copy.linkedBriefId) : null;
+            const linkedTasks = project.tasks ? project.tasks.filter(t => t.sourceItemType === 'copy' && t.sourceItemId === copy.id) : [];
+            
+            html += `<div class="item-section">`;
+            html += `<h3>${copy.title}</h3>`;
+            html += `<div class="meta-info">Created: ${formatDate(copy.createdAt)}</div>`;
+            
+            if (linkedBrief) {
+                html += `<div class="linked-indicator">Linked to brief: "${linkedBrief.title}"</div>`;
+            }
+            
+            if (copy.richContent && copy.richContent.trim()) {
+                html += `<div>${copy.richContent}</div>`;
+            } else if (copy.content && copy.content.trim()) {
+                html += `<div>${copy.content.replace(/\n/g, '<br>')}</div>`;
+            }
+            
+            if (linkedTasks.length > 0) {
+                html += `<div class="task-list"><strong>Related Tasks:</strong>`;
+                linkedTasks.forEach(task => {
+                    html += `<div class="task-item ${task.completed ? 'task-completed' : ''}">• ${task.title}</div>`;
+                });
+                html += `</div>`;
+            }
+            
+            html += `</div>`;
+        });
+    }
+    
+    // Export Tasks
+    if (project.tasks && project.tasks.length > 0) {
+        html += `<h2>Tasks (${project.tasks.length})</h2>`;
+        
+        const pendingTasks = project.tasks.filter(t => !t.completed);
+        const completedTasks = project.tasks.filter(t => t.completed);
+        
+        if (pendingTasks.length > 0) {
+            html += `<h3>Pending Tasks (${pendingTasks.length})</h3>`;
+            pendingTasks.forEach(task => {
+                const sourceItem = getTaskSourceItem(project, task);
+                
+                html += `<div class="item-section">`;
+                html += `<h4>${task.title}</h4>`;
+                html += `<div class="meta-info">Created: ${formatDate(task.createdAt)}</div>`;
+                
+                if (sourceItem) {
+                    html += `<div class="linked-indicator">Source: ${task.sourceItemType} "${sourceItem.title}"</div>`;
+                }
+                
+                if (task.content && task.content.trim()) {
+                    html += `<div>${task.content.replace(/\n/g, '<br>')}</div>`;
+                }
+                
+                html += `</div>`;
+            });
+        }
+        
+        if (completedTasks.length > 0) {
+            html += `<h3>Completed Tasks (${completedTasks.length})</h3>`;
+            completedTasks.forEach(task => {
+                const sourceItem = getTaskSourceItem(project, task);
+                
+                html += `<div class="item-section">`;
+                html += `<h4 class="task-completed">${task.title}</h4>`;
+                html += `<div class="meta-info">Created: ${formatDate(task.createdAt)} | Completed: ${task.completedAt ? formatDate(task.completedAt) : 'Unknown'}</div>`;
+                
+                if (sourceItem) {
+                    html += `<div class="linked-indicator">Source: ${task.sourceItemType} "${sourceItem.title}"</div>`;
+                }
+                
+                if (task.content && task.content.trim()) {
+                    html += `<div class="task-completed">${task.content.replace(/\n/g, '<br>')}</div>`;
+                }
+                
+                html += `</div>`;
+            });
+        }
+    }
+    
+    html += `
+    <br><br>
+    <hr>
+    <div class="meta-info" style="text-align: center;">
+        Exported from Creative Project Manager on ${new Date().toLocaleDateString()}
+    </div>
+</body>
+</html>`;
+    
+    return html;
+}
+
+function getLinkedItemsForBrief(project, briefId) {
+    const notes = project.notes ? project.notes.filter(n => n.linkedBriefId === briefId) : [];
+    const copy = project.copy ? project.copy.filter(c => c.linkedBriefId === briefId) : [];
+    return { notes, copy };
+}
+
+function getTaskSourceItem(project, task) {
+    if (!task.sourceItemId || !task.sourceItemType) return null;
+    
+    switch(task.sourceItemType) {
+        case 'brief':
+            return project.briefs ? project.briefs.find(b => b.id === task.sourceItemId) : null;
+        case 'note':
+            return project.notes ? project.notes.find(n => n.id === task.sourceItemId) : null;
+        case 'copy':
+            return project.copy ? project.copy.find(c => c.id === task.sourceItemId) : null;
+        default:
+            return null;
     }
 }
 
