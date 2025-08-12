@@ -6,7 +6,7 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    background: #fafafa;
+    background: #faf9f7;
     min-height: 100vh;
     color: #2d3748;
 }
@@ -24,7 +24,7 @@ h1, h2, h3, h4, h5, h6,
 }
 
 .header {
-    background: #ffffff;
+    background: #fffffe;
     border-bottom: 1px solid #e2e8f0;
     padding: 16px 20px;
     margin-bottom: 20px;
@@ -32,6 +32,7 @@ h1, h2, h3, h4, h5, h6,
     justify-content: space-between;
     align-items: center;
 }
+
 kbd {
     background-color: #f1f3f4;
     border: 1px solid #c1c7cd;
@@ -60,6 +61,7 @@ kbd {
     font-family: monospace;
     font-weight: 500;
 }
+
 .project-selector {
     display: flex;
     align-items: center;
@@ -102,7 +104,7 @@ kbd {
 }
 
 .global-tasks-panel {
-    background: #ffffff;
+    background: #fffffe;
     border: 1px solid #e5e5e5;
     border-radius: 2px;
     padding: 20px;
@@ -130,7 +132,7 @@ kbd {
 .top-three-section {
     margin-bottom: 24px;
     padding: 16px;
-    background: #f8f8f8;
+    background: #f9f8f6;
     border-radius: 2px;
     border-left: 3px solid #171717;
 }
@@ -249,13 +251,30 @@ kbd {
 }
 
 .panel {
-    background: #ffffff;
+    background: #fffffe;
     border: 1px solid #e2e8f0;
     border-radius: 2px;
     padding: 20px;
     transition: all 0.2s ease;
     min-height: 400px;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+/* Varied warm backgrounds for different panel types */
+.panel[style*="briefs"] {
+    background: #fffffe;
+}
+
+.panel[style*="notes"] {
+    background: #fffffb;
+}
+
+.panel[style*="copy"] {
+    background: #fefefe;
+}
+
+.panel[style*="tasks"] {
+    background: #fffff9;
 }
 
 .panel:hover {
@@ -302,7 +321,7 @@ input, textarea, select {
     border-radius: 2px;
     font-size: 14px;
     transition: all 0.2s ease;
-    background: #ffffff;
+    background: #fffffe;
 }
 
 input:focus, textarea:focus, select:focus {
@@ -350,7 +369,7 @@ button:active {
 }
 
 .item {
-    background: #ffffff;
+    background: #fffffe;
     border: 1px solid #e5e5e5;
     border-radius: 2px;
     padding: 16px 20px 16px 40px;
@@ -462,7 +481,7 @@ button:active {
     font-size: 12px;
     margin-bottom: 12px;
     transition: all 0.2s ease;
-    background: #fafafa;
+    background: #faf9f7;
 }
 
 .drop-zone-mini.drag-over {
@@ -542,6 +561,27 @@ button:active {
     border-bottom: 1px solid #e5e5e5;
 }
 
+.modal-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    margin-top: 24px;
+}
+
+.modal-actions button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+    background: #3b82f6;
+    color: white;
+}
+
+.modal-actions button:hover {
+    background: #2563eb;
+}
+
 .close-btn {
     background: none;
     border: none;
@@ -558,6 +598,142 @@ button:active {
 
 .close-btn:hover {
     color: #374151;
+}
+
+/* Rich text editor styles */
+.rich-text-editor {
+    min-height: 200px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    padding: 12px;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+    background: white;
+    resize: vertical;
+    overflow-y: auto;
+}
+
+.rich-text-editor:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+.rich-text-editor:empty:before {
+    content: attr(placeholder);
+    color: #9ca3af;
+    font-style: italic;
+}
+
+/* Rich text content styling */
+.rich-text-editor h1, .rich-text-editor h2, .rich-text-editor h3 {
+    margin: 16px 0 8px 0;
+    font-weight: 600;
+}
+
+.rich-text-editor h1 { font-size: 1.5em; }
+.rich-text-editor h2 { font-size: 1.3em; }
+.rich-text-editor h3 { font-size: 1.1em; }
+
+.rich-text-editor p {
+    margin: 8px 0;
+}
+
+.rich-text-editor ul, .rich-text-editor ol {
+    margin: 8px 0;
+    padding-left: 24px;
+}
+
+.rich-text-editor li {
+    margin: 4px 0;
+}
+
+.rich-text-editor strong {
+    font-weight: 600;
+}
+
+.rich-text-editor em {
+    font-style: italic;
+}
+
+.rich-text-editor blockquote {
+    border-left: 4px solid #d1d5db;
+    padding-left: 12px;
+    margin: 12px 0;
+    color: #6b7280;
+    font-style: italic;
+}
+
+.rich-text-editor a {
+    color: #3b82f6;
+    text-decoration: underline;
+}
+
+/* Form group styling */
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 500;
+    color: #374151;
+}
+
+.form-group input[type="text"],
+.form-group textarea,
+.form-group select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    font-size: 14px;
+    background: white;
+}
+
+.form-group input[type="text"]:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+/* Document upload zone styles */
+.document-upload-zone {
+    border: 2px dashed #d1d5db;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 10px;
+    text-align: center;
+    color: #6b7280;
+    background: #f9fafb;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.document-upload-zone:hover {
+    border-color: #3b82f6;
+    background: #eff6ff;
+}
+
+.project-import-zone {
+    border: 2px dashed #d1d5db;
+    border-radius: 8px;
+    padding: 30px;
+    margin: 20px 0;
+    text-align: center;
+    color: #6b7280;
+    background: #f9fafb;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.project-import-zone:hover {
+    border-color: #3b82f6;
+    background: #eff6ff;
 }
 
 /* Editor Modal Styles */
@@ -637,7 +813,7 @@ button:active {
     gap: 4px;
     margin-bottom: 16px;
     padding: 8px;
-    background: #f8f8f8;
+    background: #f9f8f6;
     border-radius: 2px;
     flex-wrap: wrap;
 }
@@ -1139,7 +1315,7 @@ button:active {
     padding: 0 20px 8px;
     margin-bottom: 0px;
     border-bottom: 1px solid #e2e8f0;
-    background: #f5f5f5;
+    background: #f7f6f4;
 }
 
 .breadcrumb-trail {
@@ -1268,24 +1444,120 @@ button:active {
     font-size: 12px;
 }
 
+/* Default panel borders - used when not in project context */
 .panel[style*="briefs"] {
-    background: #ffffff;
+    background: #fffffe;
     border-left: 2px solid #3b82f6;
 }
 
 .panel[style*="notes"] {
-    background: #ffffff;
+    background: #fffffb;
     border-left: 2px solid #f59e0b;
 }
 
 .panel[style*="copy"] {
-    background: #ffffff;
+    background: #fefefe;
     border-left: 2px solid #8b5cf6;
 }
 
 .panel[style*="tasks"] {
-    background: #ffffff;
+    background: #fffff9;
     border-left: 2px solid #10b981;
+}
+
+/* Project-themed panel borders - override default colors when in project context */
+.project-themed .panel[style*="briefs"],
+.project-themed .panel[style*="notes"],
+.project-themed .panel[style*="copy"],
+.project-themed .panel[style*="tasks"] {
+    border-left: 2px solid var(--primary);
+}
+
+/* Alternative approach - add project context class to dashboard */
+.dashboard.project-context .panel[style*="briefs"],
+.dashboard.project-context .panel[style*="notes"],
+.dashboard.project-context .panel[style*="copy"],
+.dashboard.project-context .panel[style*="tasks"] {
+    border-left: 2px solid var(--primary);
+}
+
+/* Top Tasks Horizontal Row */
+.top-tasks-row {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding: 20px;
+    display: flex;
+    gap: 16px;
+    background: #faf9f7;
+    border-bottom: 1px solid #e2e8f0;
+    margin-bottom: 20px;
+}
+
+.top-task-item {
+    flex: 1;
+    background: #ffffff;
+    border: 1px solid #e5e5e5;
+    border-left: 3px solid #10b981;
+    border-radius: 2px;
+    padding: 8px 32px 8px 12px;
+    min-height: 45px;
+    cursor: grab;
+    transition: all 0.2s ease;
+    position: relative;
+}
+
+.top-task-item:hover {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    transform: translateY(-1px);
+}
+
+.top-task-item .task-title {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.2;
+    color: #171717;
+    margin-bottom: 2px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.top-task-item .task-meta {
+    font-size: 10px;
+    color: #737373;
+    margin-bottom: 0;
+    line-height: 1.2;
+}
+
+.top-task-item .task-checkbox {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+
+.top-tasks-drop-zone {
+    min-height: 45px;
+    border: 1px dashed #d4d4d4;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #a3a3a3;
+    font-size: 11px;
+    background: #faf9f7;
+    transition: all 0.2s ease;
+    flex: 1;
+    text-align: center;
+    padding: 8px;
+}
+
+.top-tasks-drop-zone::before {
+    content: "Drop task here";
+    font-weight: 500;
 }
 
 /* Responsive adjustments */
@@ -1385,82 +1657,4 @@ button:active {
     .project-grid {
         grid-template-columns: 1fr;
     }
-}
-/* Top Tasks Horizontal Row */
-.top-tasks-row {
-    max-width: 1600px;
-    margin: 0 auto;
-    padding: 20px;
-    display: flex;
-    gap: 16px;
-    background: #fafafa;
-    border-bottom: 1px solid #e2e8f0;
-    margin-bottom: 20px;
-}
-
-.top-task-item {
-    flex: 1;
-    background: #ffffff;
-    border: 1px solid #e5e5e5;
-    border-left: 3px solid #10b981;
-    border-radius: 2px;
-    padding: 8px 32px 8px 12px;
-    min-height: 45px;
-    cursor: grab;
-    transition: all 0.2s ease;
-    position: relative;
-}
-
-.top-task-item:hover {
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    transform: translateY(-1px);
-}
-
-.top-task-item .task-title {
-    font-size: 13px;
-    font-weight: 600;
-    line-height: 1.2;
-    color: #171717;
-    margin-bottom: 2px;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-}
-
-.top-task-item .task-meta {
-    font-size: 10px;
-    color: #737373;
-    margin-bottom: 0;
-    line-height: 1.2;
-}
-
-.top-task-item .task-checkbox {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    width: 14px;
-    height: 14px;
-    cursor: pointer;
-}
-
-.top-tasks-drop-zone {
-    min-height: 45px;
-    border: 1px dashed #d4d4d4;
-    border-radius: 2px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #a3a3a3;
-    font-size: 11px;
-    background: #fafafa;
-    transition: all 0.2s ease;
-    flex: 1;
-    text-align: center;
-    padding: 8px;
-}
-
-.top-tasks-drop-zone::before {
-    content: "Drop task here";
-    font-weight: 500;
 }
