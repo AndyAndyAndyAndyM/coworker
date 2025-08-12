@@ -466,9 +466,9 @@ button:active {
 .copy-item { border-left: 3px solid #8b5cf6; }
 .task-item { border-left: 3px solid #10b981; }
 
-.brief-item.linked { background: #fafafa; }
-.note-item.linked { background: #fafafa; }
-.copy-item.linked { background: #fafafa; }
+.brief-item.linked { background: #f9f8f6; }
+.note-item.linked { background: #f9f8f6; }
+.copy-item.linked { background: #f9f8f6; }
 
 .drop-zone-mini {
     min-height: 40px;
