@@ -770,7 +770,7 @@ function sortTasksWithCompletedAtBottom(tasks) {
     });
 }
 
-// ===== DOCUMENT UPLOAD AND PROCESSING =====
+// ===== DOCUMENT UPLOAD AND PROCESSING - UPDATED FOR RICH TEXT =====
 
 // Try to load mammoth library for document processing
 let mammothLibrary = null;
@@ -890,29 +890,26 @@ async function processWordDocument(file) {
         // Read file as array buffer
         const arrayBuffer = await file.arrayBuffer();
         
-        // Use mammoth to extract text with basic formatting
-        const result = await mammothLibrary.extractRawText({arrayBuffer: arrayBuffer});
+        // Use mammoth to extract HTML with formatting preserved
+        const result = await mammothLibrary.convertToHtml({arrayBuffer: arrayBuffer});
         
         if (result.value && result.value.trim()) {
-            // Insert extracted text into client brief field
+            // Clean up the HTML - remove excessive whitespace and normalize
+            const cleanedHtml = cleanupDocumentHtml(result.value);
+            
+            // Insert extracted HTML into client brief field
             const clientBriefField = getEl('editorClientBrief');
             if (clientBriefField) {
-                // Clean up the text - remove excessive whitespace and normalize line breaks
-                const cleanedText = result.value
-                    .replace(/\r\n/g, '\n')  // Normalize line breaks
-                    .replace(/\r/g, '\n')    // Handle old Mac line breaks
-                    .replace(/\n{3,}/g, '\n\n')  // Replace multiple line breaks with double
-                    .trim();
-                
-                clientBriefField.value = cleanedText;
+                clientBriefField.innerHTML = cleanedHtml;
                 
                 // Trigger autosave
                 debouncedAutosave();
                 
-                showNotification(`Document imported successfully! (${Math.round(cleanedText.length / 1000)}k characters)`);
+                const textLength = htmlToText(cleanedHtml).length;
+                showNotification(`Document imported successfully! (${Math.round(textLength / 1000)}k characters)`);
             }
         } else {
-            showNotification('No text content found in document');
+            showNotification('No content found in document');
         }
         
         if (result.messages && result.messages.length > 0) {
@@ -946,6 +943,33 @@ async function processWordDocument(file) {
             showNotification('Tip: You can also copy text from Word and paste it directly into the field');
         }, 3000);
     }
+}
+
+// New function to clean up HTML from document processing
+function cleanupDocumentHtml(html) {
+    if (!html) return '';
+    
+    return html
+        // Remove empty paragraphs
+        .replace(/<p>\s*<\/p>/g, '')
+        .replace(/<p><br\s*\/?><\/p>/g, '')
+        // Remove excessive line breaks
+        .replace(/(<br\s*\/?>){3,}/g, '<br><br>')
+        // Clean up whitespace within tags
+        .replace(/>\s+</g, '><')
+        // Normalize paragraph spacing
+        .replace(/(<\/p>)\s*(<p>)/g, '$1$2')
+        // Remove trailing whitespace in paragraphs
+        .replace(/<p>\s+/g, '<p>')
+        .replace(/\s+<\/p>/g, '</p>')
+        // Clean up list formatting
+        .replace(/(<\/li>)\s*(<li>)/g, '$1$2')
+        .replace(/(<\/ul>)\s*(<ul>)/g, '$1$2')
+        .replace(/(<\/ol>)\s*(<ol>)/g, '$1$2')
+        // Remove empty list items
+        .replace(/<li>\s*<\/li>/g, '')
+        // Final cleanup
+        .trim();
 }
 
 // ===== BREADCRUMB IMPROVEMENTS =====
@@ -1844,11 +1868,18 @@ function saveCurrentContext() {
     
     // Save editor state
     if (currentEditingType === 'brief') {
+        const clientBriefField = getEl('editorClientBrief');
         context.editorState = {
             title: getValue('editorItemTitle'),
             proposition: getValue('editorProposition'),
-            clientBrief: getValue('editorClientBrief')
+            clientBrief: clientBriefField ? htmlToText(clientBriefField.innerHTML) : '',
+            clientBriefRich: clientBriefField ? clientBriefField.innerHTML : ''
         };
+        
+        // Save cursor position for rich text client brief
+        if (clientBriefField && clientBriefField.contentEditable === 'true') {
+            context.cursorPosition = saveCursorPosition(clientBriefField);
+        }
     } else {
         const richEditor = getEl('richEditor');
         const textEditor = getEl('editorContent');
@@ -1981,9 +2012,20 @@ function restoreEditorState(context) {
     setValue('editorItemTitle', context.editorState.title || '');
     
     if (context.itemType === 'brief') {
-        // Restore brief fields
+        // Restore brief fields including rich text client brief
         setValue('editorProposition', context.editorState.proposition || '');
-        setValue('editorClientBrief', context.editorState.clientBrief || '');
+        
+        const clientBriefField = getEl('editorClientBrief');
+        if (clientBriefField && context.editorState.clientBriefRich) {
+            clientBriefField.innerHTML = context.editorState.clientBriefRich;
+            
+            // Restore cursor position for rich text field
+            if (context.cursorPosition) {
+                setTimeout(() => {
+                    restoreCursorPosition(clientBriefField, context.cursorPosition);
+                }, 100);
+            }
+        }
     } else {
         // Restore content fields
         if (context.editorState.isRichText) {
@@ -2733,16 +2775,18 @@ function copyContentToClipboard() {
         // For briefs, combine title, proposition, and client brief
         const title = getValue('editorItemTitle');
         const proposition = getValue('editorProposition');
-        const clientBrief = getValue('editorClientBrief');
+        const clientBriefField = getEl('editorClientBrief');
+        const clientBriefHtml = clientBriefField ? clientBriefField.innerHTML : '';
+        const clientBriefText = htmlToText(clientBriefHtml);
         
         contentToCopy = title;
         if (proposition) contentToCopy += '\n\nPROPOSITION:\n' + proposition;
-        if (clientBrief) contentToCopy += '\n\nCLIENT BRIEF:\n' + clientBrief;
+        if (clientBriefText) contentToCopy += '\n\nCLIENT BRIEF:\n' + clientBriefText;
         
         // Create HTML version
         htmlContent = `<h3>${title}</h3>`;
         if (proposition) htmlContent += `<h4>PROPOSITION:</h4><p>${proposition.replace(/\n/g, '<br>')}</p>`;
-        if (clientBrief) htmlContent += `<h4>CLIENT BRIEF:</h4><p>${clientBrief.replace(/\n/g, '<br>')}</p>`;
+        if (clientBriefHtml) htmlContent += `<h4>CLIENT BRIEF:</h4>${clientBriefHtml}`;
     } else {
         // For notes, copy, and tasks
         const title = getValue('editorItemTitle');
@@ -2869,9 +2913,34 @@ function openItemEditor(item, itemType) {
         setDisplay('briefFields', 'block');
         setDisplay('standardFields', 'none');
         
-        // Handle backwards compatibility
+        // Handle backwards compatibility and set up rich text for client brief
         setValue('editorProposition', item.proposition || '');
-        setValue('editorClientBrief', item.clientBrief || item.content || '');
+        
+        // Convert client brief to rich text editor
+        const clientBriefField = getEl('editorClientBrief');
+        if (clientBriefField) {
+            // Make client brief field a rich text editor
+            clientBriefField.contentEditable = true;
+            clientBriefField.style.minHeight = '200px';
+            clientBriefField.style.border = '1px solid #d1d5db';
+            clientBriefField.style.borderRadius = '4px';
+            clientBriefField.style.padding = '8px';
+            clientBriefField.style.fontFamily = 'inherit';
+            clientBriefField.style.fontSize = '14px';
+            clientBriefField.style.lineHeight = '1.5';
+            
+            // Set content - use rich content if available, otherwise convert plain text
+            if (item.clientBriefRich) {
+                clientBriefField.innerHTML = item.clientBriefRich;
+            } else if (item.clientBrief) {
+                clientBriefField.innerHTML = textToHtml(item.clientBrief);
+            } else if (item.content) {
+                // Backwards compatibility
+                clientBriefField.innerHTML = textToHtml(item.content);
+            } else {
+                clientBriefField.innerHTML = '<p></p>';
+            }
+        }
         
         // Setup document upload for briefs
         setTimeout(() => {
@@ -2903,9 +2972,9 @@ function openItemEditor(item, itemType) {
             setDisplay('insertHeadingsBtn', itemType === 'note' ? 'inline-flex' : 'none');
         }
         
-        // Show copy to clipboard button for notes and copy
+        // Show copy to clipboard button for notes, copy, and briefs
         if (copyToClipboardBtn) {
-            setDisplay('copyToClipboardBtn', (itemType === 'note' || itemType === 'copy') ? 'inline-flex' : 'none');
+            setDisplay('copyToClipboardBtn', (itemType === 'note' || itemType === 'copy' || itemType === 'brief') ? 'inline-flex' : 'none');
         }
     }
     
@@ -2913,64 +2982,31 @@ function openItemEditor(item, itemType) {
     setDisplay('itemEditor', 'block');
     console.log('Modal displayed, item type:', itemType);
     
-    // NOW handle pomodoro timer after modal is shown - with multiple attempts
+    // Handle pomodoro timer setup
     const setupPomodoroTimer = () => {
         const pomodoroTimer = getEl('pomodoroTimer');
         const pomodoroDisplay = getEl('pomodoroDisplay');
         const pomodoroStatus = getEl('pomodoroStatus');
         
-        console.log('Pomodoro elements found:', {
-            timer: !!pomodoroTimer,
-            display: !!pomodoroDisplay, 
-            status: !!pomodoroStatus,
-            itemType: itemType
-        });
-        
         if (itemType === 'note' || itemType === 'copy') {
             if (pomodoroTimer) {
-                // Force visibility with important
                 pomodoroTimer.style.display = 'flex';
                 pomodoroTimer.style.visibility = 'visible';
-                console.log('Set pomodoro timer display to flex for', itemType);
-                console.log('Timer computed style:', window.getComputedStyle(pomodoroTimer).display);
                 
-                // Initialize pomodoro after timer is visible
                 setTimeout(() => {
                     if (pomodoroDisplay && pomodoroStatus) {
                         initializePomodoro();
                         updatePomodoroHeaderStyle();
-                        console.log('Pomodoro initialized successfully for', itemType);
-                    } else {
-                        console.error('Pomodoro display/status elements missing!');
                     }
                 }, 50);
-            } else {
-                console.error('Pomodoro timer element not found! Retrying...');
-                // Retry once more after a longer delay
-                setTimeout(() => {
-                    const retryTimer = getEl('pomodoroTimer');
-                    if (retryTimer) {
-                        retryTimer.style.display = 'flex';
-                        retryTimer.style.visibility = 'visible';
-                        console.log('Retry successful - pomodoro timer found and shown');
-                        setTimeout(() => {
-                            initializePomodoro();
-                            updatePomodoroHeaderStyle();
-                        }, 50);
-                    } else {
-                        console.error('Pomodoro timer still not found after retry');
-                    }
-                }, 200);
             }
         } else {
             if (pomodoroTimer) {
                 pomodoroTimer.style.display = 'none';
-                console.log('Hiding pomodoro timer for', itemType);
             }
         }
     };
     
-    // Try initializing immediately, then with delays
     setTimeout(setupPomodoroTimer, 50);
     
     setTimeout(() => {
@@ -2986,7 +3022,6 @@ function openItemEditor(item, itemType) {
             existingContext.itemType == itemType &&
             existingContext.editorState) {
             
-            // Auto-restore previous state without asking
             setTimeout(() => {
                 restoreEditorState(existingContext);
                 showContextIndicator('Previous work state restored', true);
@@ -3354,11 +3389,21 @@ function renderBriefs() {
         // Use the brief's assigned color always (not just when linked)
         const borderColor = brief.linkColor || '#a3a3a3';
         
-        // Handle backwards compatibility for old briefs with just 'content'
+        // Handle backwards compatibility and rich text content
         const proposition = brief.proposition || '';
         const clientBrief = brief.clientBrief || brief.content || '';
+        const clientBriefRich = brief.clientBriefRich || '';
         const hasProposition = proposition.trim().length > 0;
-        const hasClientBrief = clientBrief.trim().length > 0;
+        const hasClientBrief = clientBrief.trim().length > 0 || clientBriefRich.trim().length > 0;
+        
+        // Get preview content - prefer rich content, fallback to plain text
+        let clientBriefPreview = '';
+        if (clientBriefRich && clientBriefRich.trim()) {
+            // Convert rich content to plain text for preview
+            clientBriefPreview = truncateContent(htmlToText(clientBriefRich), 120);
+        } else if (clientBrief) {
+            clientBriefPreview = truncateContent(clientBrief, 120);
+        }
         
         return `
             <div class="item brief-item sortable-item ${linkedCount > 0 ? 'linked-item' : ''}" 
@@ -3377,6 +3422,7 @@ function renderBriefs() {
                 <div class="item-meta">
                     Created: ${formatDate(brief.createdAt)}
                     ${linkedCount > 0 ? ` • ${linkedCount} linked item${linkedCount > 1 ? 's' : ''}` : ''}
+                    ${clientBriefRich ? ' • Rich text' : ''}
                 </div>
                 
                 ${hasProposition ? `
@@ -3390,9 +3436,9 @@ function renderBriefs() {
                 
                 ${hasClientBrief ? `
                     <div style="margin: 8px 0; padding: 8px; background: #fefce8; border-left: 3px solid #eab308; border-radius: 4px;">
-                        <div style="font-size: 11px; font-weight: 600; color: #a16207; text-transform: uppercase; margin-bottom: 4px;">Client Brief</div>
+                        <div style="font-size: 11px; font-weight: 600; color: #a16207; text-transform: uppercase; margin-bottom: 4px;">Client Brief ${clientBriefRich ? '(Rich Text)' : ''}</div>
                         <div style="color: #525252; line-height: 1.4; font-size: 13px;">
-                            ${truncateContent(clientBrief, 120)}
+                            ${clientBriefPreview}
                         </div>
                     </div>
                 ` : ''}
@@ -3862,16 +3908,25 @@ function autosaveItem() {
     
     // Handle different item types
     if (currentEditingType === 'brief') {
-        // Save brief-specific fields
+        // Save brief-specific fields with rich text support
         const oldProposition = currentEditingItem.proposition || '';
         const oldClientBrief = currentEditingItem.clientBrief || '';
-        const newProposition = getValue('editorProposition');
-        const newClientBrief = getValue('editorClientBrief');
+        const oldClientBriefRich = currentEditingItem.clientBriefRich || '';
         
-        contentChanged = contentChanged || (oldProposition !== newProposition) || (oldClientBrief !== newClientBrief);
+        const newProposition = getValue('editorProposition');
+        const clientBriefField = getEl('editorClientBrief');
+        const newClientBriefRich = clientBriefField ? clientBriefField.innerHTML : '';
+        const newClientBrief = htmlToText(newClientBriefRich);
+        
+        contentChanged = contentChanged || 
+                        (oldProposition !== newProposition) || 
+                        (oldClientBrief !== newClientBrief) ||
+                        (oldClientBriefRich !== newClientBriefRich);
         
         currentEditingItem.proposition = newProposition;
         currentEditingItem.clientBrief = newClientBrief;
+        currentEditingItem.clientBriefRich = newClientBriefRich;
+        
         // Remove old content field for cleanup
         delete currentEditingItem.content;
     } else {
@@ -3886,7 +3941,7 @@ function autosaveItem() {
             contentChanged = contentChanged || (oldContent !== newContent);
             
             currentEditingItem.content = newContent;
-            currentEditingItem.richContent = richEditor.innerHTML; // Store rich content separately
+            currentEditingItem.richContent = richEditor.innerHTML;
         } else if (textEditor) {
             // Plain text editor
             const oldContent = currentEditingItem.content || '';
@@ -3975,7 +4030,10 @@ function setupAutosaveListeners() {
     const propositionField = getEl('editorProposition');
     const clientBriefField = getEl('editorClientBrief');
     if (propositionField) propositionField.addEventListener('input', debouncedAutosave);
-    if (clientBriefField) clientBriefField.addEventListener('input', debouncedAutosave);
+    if (clientBriefField && clientBriefField.contentEditable === 'true') {
+        clientBriefField.addEventListener('input', debouncedAutosave);
+        clientBriefField.addEventListener('paste', () => setTimeout(debouncedAutosave, 100));
+    }
     
     // Rich text editor
     const richEditor = getEl('richEditor');
@@ -4072,6 +4130,36 @@ function handleDeleteClick(event) {
     }
 }
 
+// ===== MIGRATION FUNCTION FOR EXISTING BRIEFS =====
+
+function migrateBriefsToRichText() {
+    let hasChanges = false;
+    
+    projects.forEach(project => {
+        if (project.briefs) {
+            project.briefs.forEach(brief => {
+                // If brief has clientBrief but no clientBriefRich, convert it
+                if (brief.clientBrief && !brief.clientBriefRich) {
+                    brief.clientBriefRich = textToHtml(brief.clientBrief);
+                    hasChanges = true;
+                }
+                // Handle old 'content' field
+                else if (brief.content && !brief.clientBrief && !brief.clientBriefRich) {
+                    brief.clientBrief = brief.content;
+                    brief.clientBriefRich = textToHtml(brief.content);
+                    delete brief.content;
+                    hasChanges = true;
+                }
+            });
+        }
+    });
+    
+    if (hasChanges) {
+        saveProjects();
+        console.log('Migrated existing briefs to rich text format');
+    }
+}
+
 // ===== INITIALIZATION =====
 
 function initializeApp() {
@@ -4152,6 +4240,9 @@ function initializeApp() {
                 }
             });
             saveProjects(); // Save the updated projects
+            
+            // Migrate existing briefs to rich text format
+            migrateBriefsToRichText();
             
             // Initialize the link color index based on existing colors
             initializeLinkColorIndex();
@@ -4432,10 +4523,10 @@ window.renderGlobalTasks = renderGlobalTasks;
 
 console.log('Creative Project Manager loaded successfully!');
 console.log('Features:');
-console.log('✓ Document upload for briefs (.docx files) - Fixed duplicate zones & processing');
+console.log('✓ Rich text client briefs with document upload (.docx files)');
 console.log('✓ Global task management system');
 console.log('✓ Smart breadcrumb trail (screen-width limited)');
 console.log('✓ Brief deletion preserves linked items');
-console.log('✓ Rich text support for client briefs');
+console.log('✓ Rich text support for notes, copy, and client briefs');
 console.log('✓ Pomodoro timer with focus mode');
 console.log('✓ Context preservation system');
