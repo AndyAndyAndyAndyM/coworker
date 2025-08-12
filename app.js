@@ -311,6 +311,7 @@ function renderTaskSection(containerId, tasks, isTopThree) {
                  data-task-id="${task.id}"
                  ondragstart="handleGlobalTaskDragStart(event)"
                  ondragend="handleGlobalTaskDragEnd(event)"
+                 ondblclick="openGlobalTaskSource('${task.projectId}', '${task.id}')"
                  style="
                     background: white;
                     border: 1px solid #e5e5e5;
@@ -374,11 +375,8 @@ function renderTaskSection(containerId, tasks, isTopThree) {
                 ` : ''}
                 
                 <div style="font-size: 11px; color: #a3a3a3; font-style: italic; margin-top: 8px; margin-bottom: 8px; padding-left: 63px; padding-right: 8px; display: flex; justify-content: space-between; align-items: center;">
-                    <span>${hasSource ? 'Click to open source' : 'Click to edit'} • Drag to reorder</span>
+                    <span>${hasSource ? 'Double-click to open source' : 'Double-click to edit'} • Drag to reorder</span>
                     <div style="display: flex; gap: 8px;">
-                        <button onclick="event.stopPropagation(); openGlobalTaskSource('${task.projectId}', '${task.id}')" style="background: #171717; color: white; border: none; padding: 2px 6px; border-radius: 2px; font-size: 10px; cursor: pointer;">
-                            ${hasSource ? 'Open' : 'Edit'}
-                        </button>
                         ${canDiveIn ? `
                             <span style="background: #fce7f3; color: #be185d; padding: 2px 6px; border-radius: 2px; font-size: 10px; font-weight: 600; text-transform: uppercase; cursor: pointer;" onclick="event.stopPropagation(); diveInToGlobalSource('${task.projectId}', '${task.id}')" title="Open in focus mode with Pomodoro">
                                 Dive In
@@ -5114,6 +5112,7 @@ window.copyContentToClipboard = copyContentToClipboard;
 window.insertStandardHeadings = insertStandardHeadings;
 window.openProjectSettings = openProjectSettings;
 window.saveProjectSettings = saveProjectSettings;
+window.exportProjectAsWord = exportProjectAsWord;
 window.exitFocusMode = exitFocusMode;
 window.deleteBrief = deleteBrief;
 window.deleteNote = deleteNote;
@@ -5153,7 +5152,9 @@ window.renderGlobalTasks = renderGlobalTasks;
 console.log('Creative Project Manager loaded successfully!');
 console.log('Features:');
 console.log('✓ Rich text client briefs with document upload (.docx files)');
-console.log('✓ Global task management system');
+console.log('✓ Project export to Word document');
+console.log('✓ Project import from Word document with smart parsing');
+console.log('✓ Global task management system (double-click to open)');
 console.log('✓ Smart breadcrumb trail (screen-width limited)');
 console.log('✓ Brief deletion preserves linked items');
 console.log('✓ Rich text support for notes, copy, and client briefs');
