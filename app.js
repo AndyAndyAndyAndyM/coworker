@@ -1393,6 +1393,87 @@ function handleDrop(event, targetType) {
     draggedItemType = null;
 }
 
+// ===== PROJECT COLUMN DROP ZONES SETUP =====
+
+function setupProjectDropZones() {
+    const briefsColumn = getEl('briefsColumn');
+    const notesColumn = getEl('notesColumn');
+    const copyColumn = getEl('copyColumn');
+    const tasksColumn = getEl('tasksColumn');
+    
+    // Set up drop zones for each column
+    const columns = [
+        { element: briefsColumn, type: 'brief', message: 'Drop here to create brief' },
+        { element: notesColumn, type: 'note', message: 'Drop here to create note' },
+        { element: copyColumn, type: 'copy', message: 'Drop here to create copy' },
+        { element: tasksColumn, type: 'task', message: 'Drop here to create task' }
+    ];
+    
+    columns.forEach(({ element, type, message }) => {
+        if (element) {
+            // Set data attributes
+            element.setAttribute('data-drop-type', type);
+            element.setAttribute('data-drop-message', message);
+            
+            // Remove existing listeners to avoid duplicates
+            element.removeEventListener('dragover', handleColumnDragOver);
+            element.removeEventListener('dragleave', handleColumnDragLeave);
+            element.removeEventListener('drop', handleColumnDrop);
+            
+            // Add event listeners
+            element.addEventListener('dragover', handleColumnDragOver);
+            element.addEventListener('dragleave', handleColumnDragLeave);
+            element.addEventListener('drop', handleColumnDrop);
+            
+            console.log(`Set up drop zone for ${type} column`);
+        }
+    });
+}
+
+function handleColumnDragOver(event) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    
+    if (!event.currentTarget.classList.contains('drag-over')) {
+        event.currentTarget.classList.add('drag-over');
+        console.log('Drag over:', event.currentTarget.getAttribute('data-drop-message'));
+    }
+    
+    // Add visual indicator for reordering
+    if (draggedItem && draggedItemType) {
+        showDropPositionIndicator(event);
+    }
+}
+
+function handleColumnDragLeave(event) {
+    // Only remove drag-over if we're actually leaving the drop zone
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+        event.currentTarget.classList.remove('drag-over');
+        console.log('Drag leave');
+        
+        // Remove drop position indicators when leaving
+        document.querySelectorAll('.drop-position-indicator').forEach(indicator => {
+            indicator.remove();
+        });
+    }
+}
+
+function handleColumnDrop(event) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('drag-over');
+    
+    const targetType = event.currentTarget.getAttribute('data-drop-type');
+    console.log('Drop on column:', targetType, 'with item:', draggedItemType, draggedItem?.title);
+    
+    // Remove drop position indicators
+    document.querySelectorAll('.drop-position-indicator').forEach(indicator => {
+        indicator.remove();
+    });
+    
+    // Call the main handleDrop function
+    handleDrop(event, targetType);
+}
+
 function reorderItemInColumn(item, itemType, event) {
     if (!currentProject) return;
     
@@ -3098,6 +3179,18 @@ function createProject() {
             archived: false
         };
         
+        // Check if there's pending project import data
+        if (window.pendingProjectImport) {
+            const importData = window.pendingProjectImport;
+            project.briefs = importData.briefs || [];
+            project.notes = importData.notes || [];
+            project.copy = importData.copy || [];
+            // Don't import tasks as they should be created from other items
+            
+            console.log('Added imported content to project:', importData);
+            window.pendingProjectImport = null;
+        }
+        
         projects.push(project);
         saveProjects();
         updateProjectSelector();
@@ -3642,6 +3735,11 @@ function renderProject() {
     renderNotes();
     renderCopy();
     renderProjectTasks();
+    
+    // Set up drop zones after rendering
+    setTimeout(() => {
+        setupProjectDropZones();
+    }, 100);
 }
 
 function renderProjectOverview() {
@@ -4906,6 +5004,9 @@ function initializeApp() {
         // Setup delete button event listeners
         setupDeleteListeners();
         
+        // Setup project column drop zones
+        setupProjectDropZones();
+        
         // Render breadcrumbs
         renderBreadcrumbs();
         
@@ -4929,6 +5030,7 @@ function initializeApp() {
         showProjectOverview();
         updateSettingsButton();
         setupDeleteListeners();
+        setupProjectDropZones();
         renderBreadcrumbs();
     }
 }
@@ -4942,8 +5044,8 @@ document.addEventListener('fullscreenchange', function() {
         // User exited fullscreen - clean up our fullscreen mode
         const editorModal = getEl('itemEditor');
         if (editorModal) {
-            editorModal.classList.remove('true-fullscreen');
             editorModal.classList.remove('fullscreen');
+            editorModal.classList.remove('true-fullscreen');
         }
         
         // Remove overlay
@@ -5103,6 +5205,10 @@ window.handleDragEnd = handleDragEnd;
 window.handleDragOver = handleDragOver;
 window.handleDragLeave = handleDragLeave;
 window.handleDrop = handleDrop;
+window.setupProjectDropZones = setupProjectDropZones;
+window.handleColumnDragOver = handleColumnDragOver;
+window.handleColumnDragLeave = handleColumnDragLeave;
+window.handleColumnDrop = handleColumnDrop;
 window.reorderItemInColumn = reorderItemInColumn;
 window.calculateDropPosition = calculateDropPosition;
 window.showDropPositionIndicator = showDropPositionIndicator;
@@ -5160,3 +5266,10 @@ console.log('✓ Brief deletion preserves linked items');
 console.log('✓ Rich text support for notes, copy, and client briefs');
 console.log('✓ Pomodoro timer with focus mode');
 console.log('✓ Context preservation system');
+console.log('✓ Drag and drop between columns to create linked items');
+console.log('');
+console.log('DRAG & DROP USAGE:');
+console.log('• Drag briefs → notes/copy to create linked items');
+console.log('• Drag notes/copy → tasks to create tasks');
+console.log('• Drag within same column to reorder');
+console.log('• Drag notes ↔ copy to move between columns');
