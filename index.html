@@ -191,6 +191,7 @@
                 <input type="text" id="newProjectName" placeholder="Project name...">
             </div>
             <textarea id="newProjectDescription" placeholder="Project description..."></textarea>
+            <!-- Import zone will be added here dynamically by JavaScript -->
             <button onclick="createProject()">Create Project</button>
         </div>
     </div>
@@ -394,7 +395,8 @@
                 
                 <div style="margin-bottom: 16px;">
                     <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #171717;">Full Client Brief</label>
-                    <textarea id="editorClientBrief" class="editor-textarea" style="min-height: 200px;" placeholder="Paste or write the full client brief here..."></textarea>
+                    <!-- CHANGED: This is now a div instead of textarea for rich text support -->
+                    <div id="editorClientBrief" class="rich-text-editor" style="min-height: 200px;" placeholder="Paste or write the full client brief here..."></div>
                 </div>
             </div>
             
@@ -459,7 +461,11 @@
                     <option value="red">Red</option>
                 </select>
             </div>
-            <button onclick="saveProjectSettings()">Save Settings</button>
+            <!-- ADDED: Export button and improved layout -->
+            <div style="display: flex; gap: 12px; margin-top: 20px;">
+                <button onclick="saveProjectSettings()" style="flex: 1;">Save Settings</button>
+                <button onclick="exportProjectAsWord()" style="background: #16a34a; color: white; flex: 1;">📄 Export as Word</button>
+            </div>
         </div>
     </div>
 
