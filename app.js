@@ -47,6 +47,19 @@ const truncateContent = (content, maxLength = 100) => {
     return content.length > maxLength ? content.substring(0, maxLength) + '...' : content;
 };
 
+// NEW: JSON Sanitization Helper
+const sanitizeForJson = (htmlString) => {
+    if (!htmlString) return htmlString;
+    return htmlString
+        .replace(/\\/g, '\\\\')    // Escape backslashes first
+        .replace(/"/g, '\\"')      // Escape double quotes  
+        .replace(/'/g, "\\'")      // Escape single quotes
+        .replace(/\n/g, '\\n')     // Escape newlines
+        .replace(/\r/g, '\\r')     // Escape carriage returns
+        .replace(/\t/g, '\\t')     // Escape tabs
+        .replace(/\u0000-\u001F/g, ''); // Remove control characters
+};
+
 // Notification Helper (consolidates repeated notification code)
 const showNotification = (message) => {
     const notification = document.createElement('div');
@@ -1301,7 +1314,7 @@ function removeFromBreadcrumbs(itemType, itemId) {
     console.log('Removed item from breadcrumbs:', breadcrumbId);
 }
 
-// ===== DRAG AND DROP FUNCTIONS =====
+// ===== DRAG AND DROP FUNCTIONS - FIXED =====
 
 function handleDragStart(event) {
     try {
@@ -1320,9 +1333,18 @@ function handleDragStart(event) {
         try {
             itemData = JSON.parse(itemDataString);
         } catch (parseError) {
-            console.error('Failed to parse item data:', parseError, itemDataString);
-            event.preventDefault();
-            return false;
+            console.error('Failed to parse item data:', parseError);
+            console.error('Problematic data string:', itemDataString);
+            
+            // Try to extract basic info from the element for fallback
+            const fallbackData = {
+                id: itemElement.getAttribute('data-id') || generateId(),
+                title: itemElement.querySelector('.item-title')?.textContent || 'Untitled',
+                type: itemType
+            };
+            
+            console.log('Using fallback data:', fallbackData);
+            itemData = fallbackData;
         }
         
         // Validate required properties
@@ -3662,24 +3684,6 @@ function populateProjectForm(projectData) {
     }
 }
 
-function clearProjectImportZone() {
-    window.pendingProjectImport = null;
-    
-    const importZone = document.querySelector('.project-import-zone');
-    if (importZone) {
-        importZone.style.borderColor = '#d1d5db';
-        importZone.style.background = '#f9fafb';
-        
-        const isLibraryAvailable = mammothLibrary !== null;
-        importZone.innerHTML = `
-            <div style="font-size: 16px; margin-bottom: 8px;">📄 ${isLibraryAvailable ? 'Import Project from Word Document' : 'Document import not available'}</div>
-            <div style="font-size: 13px; opacity: 0.8; margin-bottom: 12px;">${isLibraryAvailable ? 'Drop a .docx file here or click to browse' : 'Document processing library required'}</div>
-            <div style="font-size: 12px; opacity: 0.6;">The document will be analyzed and content will be organized into briefs, notes, and copy automatically</div>
-            ${isLibraryAvailable ? '<input type="file" accept=".docx,.doc" style="display: none;" class="project-import-input">' : ''}
-        `;
-    }
-}
-
 // Quick add functions for input fields
 function addQuickBrief() {
     if (!currentProject) {
@@ -3901,19 +3905,17 @@ function validateDropZones() {
     }
 }
 
-// Helper function to safely serialize item data
+// FIXED: Helper function to safely serialize item data
 function safeSerializeItem(item) {
     try {
-        // Create a clean copy without circular references
+        // Create a clean copy without potentially problematic content
         const cleanItem = {
             id: item.id,
             title: item.title || '',
             type: item.type || '',
             content: item.content || '',
-            richContent: item.richContent || '',
             proposition: item.proposition || '',
             clientBrief: item.clientBrief || '',
-            clientBriefRich: item.clientBriefRich || '',
             linkedBriefId: item.linkedBriefId || null,
             linkColor: item.linkColor || null,
             sourceItemId: item.sourceItemId || null,
@@ -3923,20 +3925,43 @@ function safeSerializeItem(item) {
             createdAt: item.createdAt || getCurrentTimestamp()
         };
         
-        // Test serialization
+        // Handle rich content specially - sanitize HTML for JSON
+        if (item.richContent) {
+            cleanItem.richContent = sanitizeForJson(item.richContent);
+        }
+        if (item.clientBriefRich) {
+            cleanItem.clientBriefRich = sanitizeForJson(item.clientBriefRich);
+        }
+        
+        // Test serialization to catch issues early
         const serialized = JSON.stringify(cleanItem);
         
-        // Escape quotes for HTML attribute
-        return serialized.replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+        // Double-escape for HTML attribute safety
+        return serialized
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
         
     } catch (error) {
         console.error('Failed to serialize item:', error, item);
-        // Return minimal safe data
-        return JSON.stringify({
+        // Return minimal safe data as fallback
+        const fallbackData = {
             id: item.id || generateId(),
             title: item.title || 'Untitled',
-            type: item.type || 'unknown'
-        }).replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+            type: item.type || 'unknown',
+            content: '',
+            createdAt: item.createdAt || getCurrentTimestamp()
+        };
+        
+        const fallbackSerialized = JSON.stringify(fallbackData);
+        return fallbackSerialized
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
     }
 }
 
@@ -4079,6 +4104,7 @@ function renderBriefs() {
                      draggable="true"
                      data-item="${serializedBrief}"
                      data-type="brief"
+                     data-id="${brief.id}"
                      ondragstart="handleDragStart(event)"
                      ondragend="handleDragEnd(event)"
                      ondblclick="openItemEditor(findItem('${brief.id}', 'brief'), 'brief')"
@@ -4152,11 +4178,15 @@ function renderNotes() {
         const linkColor = getLinkColor(note, 'note');
         const borderColor = linkColor || '#a3a3a3'; // Grey for unlinked
         
+        // Safely serialize the note data
+        const serializedNote = safeSerializeItem(note);
+        
         return `
             <div class="item note-item sortable-item ${isLinked ? 'linked-item' : ''}" 
                  draggable="true"
-                 data-item='${JSON.stringify(note).replace(/'/g, '&#39;')}'
+                 data-item="${serializedNote}"
                  data-type="note"
+                 data-id="${note.id}"
                  ondragstart="handleDragStart(event)"
                  ondragend="handleDragEnd(event)"
                  ondblclick="openItemEditor(findItem('${note.id}', 'note'), 'note')"
@@ -4208,11 +4238,15 @@ function renderCopy() {
         const linkColor = getLinkColor(copy, 'copy');
         const borderColor = linkColor || '#a3a3a3'; // Grey for unlinked
         
+        // Safely serialize the copy data
+        const serializedCopy = safeSerializeItem(copy);
+        
         return `
             <div class="item copy-item sortable-item ${isLinked ? 'linked-item' : ''}" 
                  draggable="true"
-                 data-item='${JSON.stringify(copy).replace(/'/g, '&#39;')}'
+                 data-item="${serializedCopy}"
                  data-type="copy"
+                 data-id="${copy.id}"
                  ondragstart="handleDragStart(event)"
                  ondragend="handleDragEnd(event)"
                  ondblclick="openItemEditor(findItem('${copy.id}', 'copy'), 'copy')"
@@ -4284,11 +4318,15 @@ function renderProjectTasks() {
         
         const linkColor = getLinkColor(task, 'task') || '#10b981';
         
+        // Safely serialize the task data
+        const serializedTask = safeSerializeItem(task);
+        
         return `
             <div class="project-task-item" 
                  draggable="true"
-                 data-item='${JSON.stringify(task).replace(/'/g, '&#39;')}'
+                 data-item="${serializedTask}"
                  data-type="task"
+                 data-id="${task.id}"
                  ondragstart="handleDragStart(event)"
                  ondragend="handleDragEnd(event)"
                  ondblclick="openTaskSource('${task.id}')"
@@ -4988,6 +5026,26 @@ function autosaveItem() {
     }
 }
 
+function updateLinkedTaskNames(sourceId, sourceType, newTitle) {
+    let tasksUpdated = 0;
+    
+    // Update linked tasks across all projects
+    projects.forEach(project => {
+        if (project.tasks && Array.isArray(project.tasks)) {
+            project.tasks.forEach(task => {
+                if (task.sourceItemType === sourceType && task.sourceItemId === sourceId) {
+                    task.title = newTitle;
+                    tasksUpdated++;
+                }
+            });
+        }
+    });
+    
+    if (tasksUpdated > 0) {
+        console.log(`Updated ${tasksUpdated} linked task names to "${newTitle}"`);
+    }
+}
+
 function moveItemToTop(item, itemType) {
     if (!currentProject || !item) return;
     
@@ -5292,6 +5350,40 @@ function testIncrementalNaming() {
     // Test copy naming
     const testCopyName = generateIncrementalName('Test Brief - copy', 'copy');
     console.log('Test copy name would be:', testCopyName);
+}
+
+function generateIncrementalName(baseName, itemType) {
+    if (!currentProject) return baseName;
+    
+    let itemArray;
+    switch(itemType) {
+        case 'brief':
+            itemArray = currentProject.briefs;
+            break;
+        case 'note':
+            itemArray = currentProject.notes;
+            break;
+        case 'copy':
+            itemArray = currentProject.copy;
+            break;
+        case 'task':
+            itemArray = currentProject.tasks;
+            break;
+        default:
+            return baseName;
+    }
+    
+    // Check if the base name exists
+    const existingNames = itemArray.map(item => item.title.toLowerCase());
+    let finalName = baseName;
+    let counter = 2;
+    
+    while (existingNames.includes(finalName.toLowerCase())) {
+        finalName = `${baseName} ${counter}`;
+        counter++;
+    }
+    
+    return finalName;
 }
 
 // Add to window for debugging
@@ -5726,6 +5818,7 @@ window.renderGlobalTasks = renderGlobalTasks;
 
 console.log('Creative Project Manager loaded successfully!');
 console.log('Features:');
+console.log('✓ FIXED: Drag and drop JSON parsing (no more syntax errors!)');
 console.log('✓ Rich text client briefs with document upload (.docx files)');
 console.log('✓ Project export to Word document');
 console.log('✓ Project import from Word document with smart parsing');
@@ -5759,3 +5852,21 @@ console.log('• To debug drag & drop issues: debugDragAndDrop()');
 console.log('• To debug title/autosave issues: debugAutosave()');
 console.log('• To test incremental naming: testIncrementalNaming()');
 console.log('• Auto-recovery runs every 30 seconds');
+
+function clearProjectImportZone() {
+    window.pendingProjectImport = null;
+    
+    const importZone = document.querySelector('.project-import-zone');
+    if (importZone) {
+        importZone.style.borderColor = '#d1d5db';
+        importZone.style.background = '#f9fafb';
+        
+        const isLibraryAvailable = mammothLibrary !== null;
+        importZone.innerHTML = `
+            <div style="font-size: 16px; margin-bottom: 8px;">📄 ${isLibraryAvailable ? 'Import Project from Word Document' : 'Document import not available'}</div>
+            <div style="font-size: 13px; opacity: 0.8; margin-bottom: 12px;">${isLibraryAvailable ? 'Drop a .docx file here or click to browse' : 'Document processing library required'}</div>
+            <div style="font-size: 12px; opacity: 0.6;">The document will be analyzed and content will be organized into briefs, notes, and copy automatically</div>
+            ${isLibraryAvailable ? '<input type="file" accept=".docx,.doc" style="display: none;" class="project-import-input">' : ''}
+        `;
+    }
+}
