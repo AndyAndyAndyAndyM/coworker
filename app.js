@@ -1,4 +1,2402 @@
-// ===== HELPER FUNCTIONS (DEFINED EARLY) =====
+// Update both items
+        currentEditingItem.proposition = newProposition;
+        currentEditingItem.clientBrief = newClientBrief;
+        currentEditingItem.clientBriefRich = newClientBriefRich;
+        
+        actualItem.proposition = newProposition;
+        actualItem.clientBrief = newClientBrief;
+        actualItem.clientBriefRich = newClientBriefRich;
+        
+        // Remove old content field for cleanup
+        delete actualItem.content;
+        delete currentEditingItem.content;
+    } else {
+        // Save content based on editor type
+        const richEditor = getEl('richEditor');
+        const textEditor = getEl('editorContent');
+        
+        if (richEditor && richEditor.style.display !== 'none') {
+            // Rich text editor - convert HTML to text for storage
+            const oldContent = actualItem.content || '';
+            const newContent = htmlToText(richEditor.innerHTML);
+            contentChanged = contentChanged || (oldContent !== newContent);
+            
+            // Update both items
+            currentEditingItem.content = newContent;
+            currentEditingItem.richContent = richEditor.innerHTML;
+            actualItem.content = newContent;
+            actualItem.richContent = richEditor.innerHTML;
+        } else if (textEditor) {
+            // Plain text editor
+            const oldContent = actualItem.content || '';
+            const newContent = textEditor.value.trim();
+            contentChanged = contentChanged || (oldContent !== newContent);
+            
+            // Update both items
+            currentEditingItem.content = newContent;
+            actualItem.content = newContent;
+        }
+    }
+    
+    // Update linked task names if title changed
+    if (titleChanged && (currentEditingType === 'brief' || currentEditingType === 'note' || currentEditingType === 'copy')) {
+        console.log(`Title changed, updating linked tasks for ${currentEditingType} ${actualItem.id}`);
+        updateLinkedTaskNames(actualItem.id, currentEditingType, newTitle);
+    }
+    
+    // Move to top if content changed and we're actively editing
+    if (contentChanged && currentProject) {
+        moveItemToTop(actualItem, currentEditingType);
+    }
+    
+    saferSaveProjects();
+    
+    // Also save work context with each autosave
+    if (currentProject) {
+        saveCurrentContext();
+    }
+    
+    hasUnsavedChanges = false;
+    updateAutosaveStatus('saved');
+    
+    // Force immediate re-render to show changes
+    console.log('Re-rendering to show title changes');
+    switch(currentEditingType) {
+        case 'brief':
+            renderBriefs();
+            break;
+        case 'note':
+            renderNotes();
+            break;
+        case 'copy':
+            renderCopy();
+            break;
+        case 'task':
+            renderProjectTasks();
+            break;
+    }
+    
+    // If title changed and there are linked tasks, also re-render tasks
+    if (titleChanged && (currentEditingType === 'brief' || currentEditingType === 'note' || currentEditingType === 'copy')) {
+        renderProjectTasks();
+        renderGlobalTasks();
+    }
+}
+
+function updateLinkedTaskNames(sourceId, sourceType, newTitle) {
+    let tasksUpdated = 0;
+    
+    // Update linked tasks across all projects
+    projects.forEach(project => {
+        if (project.tasks && Array.isArray(project.tasks)) {
+            project.tasks.forEach(task => {
+                if (task.sourceItemType === sourceType && task.sourceItemId === sourceId) {
+                    task.title = newTitle;
+                    tasksUpdated++;
+                }
+            });
+        }
+    });
+    
+    if (tasksUpdated > 0) {
+        console.log(`Updated ${tasksUpdated} linked task names to "${newTitle}"`);
+    }
+}
+
+function moveItemToTop(item, itemType) {
+    if (!currentProject || !item) return;
+    
+    let itemArray;
+    switch(itemType) {
+        case 'brief':
+            itemArray = currentProject.briefs;
+            break;
+        case 'note':
+            itemArray = currentProject.notes;
+            break;
+        case 'copy':
+            itemArray = currentProject.copy;
+            break;
+        case 'task':
+            itemArray = currentProject.tasks;
+            break;
+        default:
+            return;
+    }
+    
+    // Update order values - move this item to top (order 0) and increment others
+    itemArray.forEach(arrayItem => {
+        if (arrayItem.id === item.id) {
+            arrayItem.order = 0;
+        } else if (arrayItem.order !== undefined) {
+            arrayItem.order += 1;
+        }
+    });
+    
+    console.log(`Moved ${itemType} "${item.title}" to top due to active editing`);
+}
+
+function setupAutosaveListeners() {
+    // Title field
+    const titleField = getEl('editorItemTitle');
+    if (titleField) {
+        titleField.addEventListener('input', debouncedAutosave);
+    }
+    
+    // Brief fields
+    const propositionField = getEl('editorProposition');
+    const clientBriefField = getEl('editorClientBrief');
+    if (propositionField) propositionField.addEventListener('input', debouncedAutosave);
+    if (clientBriefField && clientBriefField.contentEditable === 'true') {
+        clientBriefField.addEventListener('input', debouncedAutosave);
+        clientBriefField.addEventListener('paste', () => setTimeout(debouncedAutosave, 100));
+    }
+    
+    // Rich text editor
+    const richEditor = getEl('richEditor');
+    if (richEditor) {
+        richEditor.addEventListener('input', debouncedAutosave);
+        richEditor.addEventListener('paste', () => setTimeout(debouncedAutosave, 100));
+    }
+    
+    // Plain text editor
+    const textEditor = getEl('editorContent');
+    if (textEditor) {
+        textEditor.addEventListener('input', debouncedAutosave);
+        textEditor.addEventListener('paste', () => setTimeout(debouncedAutosave, 100));
+    }
+}
+
+// Make sure these functions are globally accessible
+window.openTaskSource = function(taskId) {
+    console.log('Opening task source for:', taskId);
+    if (!currentProject) {
+        console.log('No current project');
+        return;
+    }
+    
+    const task = currentProject.tasks.find(t => t.id == taskId);
+    if (!task || !task.sourceItemId || !task.sourceItemType) {
+        console.log('No source found for task, opening task editor instead');
+        openItemEditor(task, 'task');
+        return;
+    }
+    
+    // Find the source item
+    let sourceItem = null;
+    switch(task.sourceItemType) {
+        case 'brief':
+            sourceItem = currentProject.briefs.find(b => b.id === task.sourceItemId);
+            break;
+        case 'note':
+            sourceItem = currentProject.notes.find(n => n.id === task.sourceItemId);
+            break;
+        case 'copy':
+            sourceItem = currentProject.copy.find(c => c.id === task.sourceItemId);
+            break;
+    }
+    
+    if (sourceItem) {
+        console.log('Found source item:', sourceItem);
+        // Close current editor if open
+        const editorModal = getEl('itemEditor');
+        if (editorModal.style.display === 'block') {
+            closeEditor();
+        }
+        
+        // Small delay to ensure clean transition
+        setTimeout(() => {
+            openItemEditor(sourceItem, task.sourceItemType);
+        }, 100);
+    } else {
+        console.log('Source item not found, opening task editor instead');
+        openItemEditor(task, 'task');
+    }
+};
+
+// Setup delete button event listeners
+function setupDeleteListeners() {
+    // Remove existing listeners first
+    document.removeEventListener('click', handleDeleteClick);
+    
+    // Add single delegated event listener for all delete buttons
+    document.addEventListener('click', handleDeleteClick);
+}
+
+function handleDeleteClick(event) {
+    if (event.target.classList.contains('delete-btn')) {
+        event.stopPropagation();
+        event.preventDefault();
+        
+        const deleteType = event.target.getAttribute('data-delete-type');
+        const deleteId = event.target.getAttribute('data-delete-id');
+        
+        console.log('Delete button clicked:', deleteType, deleteId);
+        
+        switch(deleteType) {
+            case 'brief':
+                deleteBrief(deleteId);
+                break;
+            case 'note':
+                deleteNote(deleteId);
+                break;
+            case 'copy':
+                deleteCopy(deleteId);
+                break;
+        }
+    }
+}
+
+// ===== IMPROVED ITEM SERIALIZATION =====
+
+function safeSerializeItem(item) {
+    try {
+        // Create a clean copy without potentially problematic content
+        const cleanItem = {
+            id: item.id,
+            title: item.title || '',
+            type: item.type || '',
+            content: item.content || '',
+            proposition: item.proposition || '',
+            clientBrief: item.clientBrief || '',
+            linkedBriefId: item.linkedBriefId || null,
+            linkColor: item.linkColor || null,
+            sourceItemId: item.sourceItemId || null,
+            sourceItemType: item.sourceItemType || null,
+            completed: item.completed || false,
+            order: item.order || 0,
+            createdAt: item.createdAt || getCurrentTimestamp()
+        };
+        
+        // Handle rich content specially - sanitize HTML for JSON
+        if (item.richContent) {
+            cleanItem.richContent = sanitizeForJson(item.richContent);
+        }
+        if (item.clientBriefRich) {
+            cleanItem.clientBriefRich = sanitizeForJson(item.clientBriefRich);
+        }
+        
+        // Test serialization to catch issues early
+        const serialized = JSON.stringify(cleanItem);
+        
+        // Double-escape for HTML attribute safety
+        return serialized
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+        
+    } catch (error) {
+        console.error('Failed to serialize item:', error, item);
+        // Return minimal safe data as fallback
+        const fallbackData = {
+            id: item.id || generateId(),
+            title: item.title || 'Untitled',
+            type: item.type || 'unknown',
+            content: '',
+            createdAt: item.createdAt || getCurrentTimestamp()
+        };
+        
+        const fallbackSerialized = JSON.stringify(fallbackData);
+        return fallbackSerialized
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+}
+
+// ===== MIGRATION FUNCTION FOR EXISTING BRIEFS =====
+
+function migrateBriefsToRichText() {
+    let hasChanges = false;
+    
+    projects.forEach(project => {
+        if (project.briefs) {
+            project.briefs.forEach(brief => {
+                // If brief has clientBrief but no clientBriefRich, convert it
+                if (brief.clientBrief && !brief.clientBriefRich) {
+                    brief.clientBriefRich = textToHtml(brief.clientBrief);
+                    hasChanges = true;
+                }
+                // Handle old 'content' field
+                else if (brief.content && !brief.clientBrief && !brief.clientBriefRich) {
+                    brief.clientBrief = brief.content;
+                    brief.clientBriefRich = textToHtml(brief.content);
+                    delete brief.content;
+                    hasChanges = true;
+                }
+            });
+        }
+    });
+    
+    if (hasChanges) {
+        saferSaveProjects();
+        console.log('Migrated existing briefs to rich text format');
+    }
+}
+
+// ===== ERROR RECOVERY AND DEBUGGING =====
+
+function forceDropZoneReset() {
+    console.log('🔧 Forcing drop zone reset...');
+    
+    // Clear all tracking
+    elementsWithListeners.clear();
+    
+    // Clean up everything
+    cleanupProjectDropZones();
+    
+    // Wait a bit then re-setup
+    setTimeout(() => {
+        robustDropZoneSetup();
+        showNotification('Drop zones reset - try dragging again');
+    }, 100);
+}
+
+function debugDragAndDrop() {
+    console.log('🔍 Debugging drag and drop state:');
+    console.log('Current project:', currentProject?.name);
+    console.log('Elements with listeners:', Array.from(elementsWithListeners));
+    console.log('Dragged item:', draggedItem);
+    console.log('Dragged item type:', draggedItemType);
+    
+    // Check each column
+    const columns = ['briefsColumn', 'notesColumn', 'copyColumn', 'tasksColumn'];
+    columns.forEach(columnId => {
+        const element = getEl(columnId);
+        if (element) {
+            console.log(`${columnId}:`, {
+                exists: true,
+                hasDropType: element.hasAttribute('data-drop-type'),
+                dropType: element.getAttribute('data-drop-type'),
+                hasHandlers: !!element._dropHandlers,
+                tracked: elementsWithListeners.has(columnId)
+            });
+        } else {
+            console.log(`${columnId}:`, { exists: false });
+        }
+    });
+    
+    // Check draggable items
+    const draggableItems = document.querySelectorAll('[draggable="true"]');
+    console.log(`Found ${draggableItems.length} draggable items`);
+    
+    let itemsWithIssues = 0;
+    draggableItems.forEach((item, index) => {
+        const hasDataItem = item.hasAttribute('data-item');
+        const hasDataType = item.hasAttribute('data-type');
+        
+        if (!hasDataItem || !hasDataType) {
+            console.warn(`Item ${index} missing data:`, {
+                hasDataItem,
+                hasDataType,
+                element: item
+            });
+            itemsWithIssues++;
+        }
+    });
+    
+    console.log(`Items with issues: ${itemsWithIssues}`);
+    
+    if (itemsWithIssues > 0) {
+        console.log('🔧 Re-rendering project to fix item issues...');
+        renderProject();
+    }
+}
+
+function emergencyRecovery() {
+    console.log('🚨 Running emergency recovery...');
+    
+    // Stop any running timers
+    if (pomodoroTimer) {
+        clearInterval(pomodoroTimer);
+        pomodoroTimer = null;
+    }
+    
+    // Clear autosave timeout
+    if (autosaveTimeout) {
+        clearTimeout(autosaveTimeout);
+        autosaveTimeout = null;
+    }
+    
+    // Try to recover projects
+    debugLocalStorage();
+    const recovered = recoverMissingProject();
+    
+    // Reset drop zones
+    forceDropZoneReset();
+    
+    // Reinitialize
+    setTimeout(() => {
+        saferInitializeApp();
+    }, 500);
+    
+    showNotification('Emergency recovery completed - check console for details');
+}
+
+function exportAllData() {
+    console.log('📦 Exporting all data...');
+    
+    const allData = {
+        projects: projects,
+        breadcrumbs: loadFromStorage('breadcrumbs', []),
+        workContext: loadFromStorage('workContext'),
+        globalTaskOrder: loadFromStorage('globalTaskOrder'),
+        timestamp: new Date().toISOString(),
+        version: '1.0'
+    };
+    
+    const dataString = JSON.stringify(allData, null, 2);
+    const blob = new Blob([dataString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `copyflow_backup_${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    console.log('Data exported successfully');
+}
+
+// ===== ENHANCED INITIALIZATION =====
+
+function saferInitializeApp() {
+    try {
+        console.log('🚀 Initializing with enhanced error handling...');
+        
+        // First, debug what we have
+        debugLocalStorage();
+        
+        // Load work context
+        loadWorkContext();
+        
+        // Load projects with better error handling
+        const savedProjects = loadFromStorage('projects');
+        if (savedProjects) {
+            if (Array.isArray(savedProjects)) {
+                projects = savedProjects.filter(project => {
+                    // Validate each project
+                    if (!project || typeof project !== 'object') return false;
+                    if (!project.id || !project.name) return false;
+                    
+                    // Ensure required arrays exist
+                    if (!project.briefs) project.briefs = [];
+                    if (!project.notes) project.notes = [];
+                    if (!project.copy) project.copy = [];
+                    if (!project.tasks) project.tasks = [];
+                    
+                    // Add missing properties for backward compatibility
+                    if (!project.colorTheme) {
+                        project.colorTheme = getNextColorTheme();
+                    }
+                    if (project.archived === undefined) {
+                        project.archived = false;
+                    }
+                    
+                    // Migrate old brief format to new format
+                    if (project.briefs) {
+                        project.briefs.forEach(brief => {
+                            if (brief.content && !brief.proposition && !brief.clientBrief) {
+                                // Migrate old format: move content to clientBrief, leave proposition empty
+                                brief.clientBrief = brief.content;
+                                brief.proposition = '';
+                                delete brief.content;
+                            }
+                            // Ensure new fields exist
+                            if (brief.proposition === undefined) brief.proposition = '';
+                            if (brief.clientBrief === undefined) brief.clientBrief = '';
+                            // Assign link color if missing
+                            if (!brief.linkColor) {
+                                brief.linkColor = getNextLinkColor();
+                            }
+                        });
+                    }
+                    
+                    // Ensure tasks have order values
+                    if (project.tasks) {
+                        project.tasks.forEach((task, index) => {
+                            if (task.order === undefined) {
+                                task.order = index;
+                            }
+                        });
+                    }
+                    
+                    // Ensure all other item types have order values
+                    if (project.briefs) {
+                        project.briefs.forEach((brief, index) => {
+                            if (brief.order === undefined) {
+                                brief.order = index;
+                            }
+                        });
+                    }
+                    
+                    if (project.notes) {
+                        project.notes.forEach((note, index) => {
+                            if (note.order === undefined) {
+                                note.order = index;
+                            }
+                        });
+                    }
+                    
+                    if (project.copy) {
+                        project.copy.forEach((copy, index) => {
+                            if (copy.order === undefined) {
+                                copy.order = index;
+                            }
+                        });
+                    }
+                    
+                    return true;
+                });
+                
+                console.log(`Loaded ${projects.length} valid projects`);
+                
+                // Save any migrations
+                saferSaveProjects();
+            } else {
+                console.error('Saved projects data is not an array:', savedProjects);
+                projects = [];
+            }
+        } else {
+            projects = [];
+        }
+        
+        // Try to recover missing projects
+        const recovered = recoverMissingProject();
+        if (recovered) {
+            console.log('Successfully recovered missing project(s)');
+        }
+        
+        // Continue with normal initialization
+        initializeLinkColorIndex();
+        
+        // Migrate existing briefs to rich text format
+        migrateBriefsToRichText();
+        
+        // Initialize global tasks system
+        loadGlobalTaskOrder();
+        cleanupGlobalTaskOrder();
+        autoPopulateTopThree();
+        setupTopTasksDropZones();
+        
+        // Clean up old completed tasks (24+ hours old)
+        cleanupOldCompletedTasks();
+        
+        // Load pomodoro state
+        loadPomodoroState();
+        
+        // Initialize pomodoro daily count
+        const today = new Date().toDateString();
+        const savedDaily = loadFromStorage('pomodoroDaily');
+        
+        if (savedDaily) {
+            pomodoroDailyCount = savedDaily.date === today ? savedDaily.count : 0;
+        }
+        
+        updateProjectSelector();
+        showProjectOverview();
+        updateSettingsButton();
+        
+        // Setup delete button event listeners
+        setupDeleteListeners();
+        
+        // Use robust drop zone setup
+        robustDropZoneSetup();
+        
+        // Render breadcrumbs
+        renderBreadcrumbs();
+        
+        // Set up periodic cleanup (every hour)
+        setInterval(() => {
+            cleanupOldCompletedTasks();
+        }, 60 * 60 * 1000); // Run every hour
+        
+        // Set up periodic drop zone health check (every 30 seconds)
+        setInterval(() => {
+            if (currentProject) {
+                const columns = ['briefsColumn', 'notesColumn', 'copyColumn', 'tasksColumn'];
+                const brokenColumns = columns.filter(id => {
+                    const element = getEl(id);
+                    return element && (!element.hasAttribute('data-drop-type') || !element._dropHandlers);
+                });
+                
+                if (brokenColumns.length > 0) {
+                    console.warn(`🔧 Detected broken drop zones: ${brokenColumns.join(', ')}, fixing...`);
+                    forceDropZoneReset();
+                }
+            }
+        }, 30000);
+        
+        // Offer work resumption after a short delay
+        setTimeout(() => {
+            offerWorkResumption();
+        }, 2000);
+        
+        console.log('✅ Enhanced initialization complete');
+        
+    } catch (error) {
+        console.error('❌ Enhanced initialization failed:', error);
+        
+        // Fallback
+        projects = [];
+        initializeLinkColorIndex();
+        loadGlobalTaskOrder();
+        updateProjectSelector();
+        showProjectOverview();
+        showNotification('App loaded with errors - some data may need to be recovered');
+    }
+}
+
+// Initialize on load
+document.addEventListener('DOMContentLoaded', saferInitializeApp);
+
+// Listen for fullscreen changes
+document.addEventListener('fullscreenchange', function() {
+    if (!document.fullscreenElement) {
+        // User exited fullscreen - clean up our fullscreen mode
+        const editorModal = getEl('itemEditor');
+        if (editorModal) {
+            editorModal.classList.remove('fullscreen');
+            editorModal.classList.remove('true-fullscreen');
+        }
+        
+        // Remove overlay
+        const overlay = getEl('focusOverlay');
+        if (overlay) {
+            overlay.remove();
+        }
+        
+        // Restore cursor
+        document.body.style.cursor = 'default';
+    }
+});
+
+// Close modals when clicking outside
+window.onclick = function(event) {
+    if (event.target.classList.contains('modal') || event.target.classList.contains('editor-modal')) {
+        if (event.target.id === 'confirmModal') {
+            cancelConfirm();
+        } else {
+            event.target.style.display = 'none';
+        }
+    }
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        // Close confirmation modal first if open
+        const confirmModal = getEl('confirmModal');
+        if (confirmModal && confirmModal.style.display === 'block') {
+            cancelConfirm();
+            return;
+        }
+        
+        // Close help modal if open
+        const helpModal = getEl('helpModal');
+        if (helpModal && helpModal.style.display === 'block') {
+            closeModal('helpModal');
+            return;
+        }
+        
+        // Exit fullscreen mode if active
+        const editorModal = getEl('itemEditor');
+        if (editorModal && (editorModal.classList.contains('fullscreen') || editorModal.classList.contains('true-fullscreen'))) {
+            exitFocusMode();
+            if (pomodoroIsRunning) {
+                pausePomodoro();
+            }
+            return;
+        }
+        
+        // Otherwise close modals normally
+        document.querySelectorAll('.modal, .editor-modal').forEach(modal => {
+            modal.style.display = 'none';
+        });
+    }
+    
+    // F1 or Ctrl+? to open help
+    if (e.key === 'F1' || (e.key === '?' && e.ctrlKey)) {
+        e.preventDefault();
+        showHelp();
+        return;
+    }
+    
+    // Enter key on confirmation modal
+    if (e.key === 'Enter') {
+        const confirmModal = getEl('confirmModal');
+        if (confirmModal && confirmModal.style.display === 'block') {
+            proceedConfirm();
+            return;
+        }
+    }
+    
+    // Ctrl+S for manual save (also saves context)
+    if (e.key === 's' && e.ctrlKey) {
+        e.preventDefault();
+        if (getEl('itemEditor').style.display === 'block') {
+            autosaveItem();
+            showContextIndicator('Work saved with context preserved');
+        }
+    }
+    
+    // Alt+B for breadcrumb navigation
+    if (e.key === 'b' && e.altKey) {
+        e.preventDefault();
+        const breadcrumbContainer = getEl('breadcrumbContainer');
+        if (breadcrumbContainer && breadcrumbContainer.style.display !== 'none') {
+            // Focus on the last breadcrumb
+            const breadcrumbs = document.querySelectorAll('.breadcrumb-item');
+            if (breadcrumbs.length > 0) {
+                breadcrumbs[breadcrumbs.length - 1].focus();
+            }
+        }
+    }
+    
+    // Ctrl+Shift+R for work resumption
+    if (e.key === 'R' && e.ctrlKey && e.shiftKey) {
+        e.preventDefault();
+        if (workContext.currentContext) {
+            // Auto-resume without asking
+            if (!currentProject || currentProject.id != workContext.currentContext.projectId) {
+                switchToProject(workContext.currentContext.projectId, () => {
+                    setTimeout(() => {
+                        restoreContext(workContext.currentContext);
+                    }, 200);
+                });
+            } else {
+                restoreContext(workContext.currentContext);
+            }
+            showContextIndicator(`Resumed work on "${workContext.currentContext.title}"`, true);
+        }
+    }
+    
+    // Pomodoro shortcuts when editor is open
+    if (getEl('itemEditor') && getEl('itemEditor').style.display === 'block') {
+        const pomodoroTimer = getEl('pomodoroTimer');
+        if (pomodoroTimer && pomodoroTimer.style.display === 'block') {
+            // Check if we're not in a contenteditable field
+            const isInEditor = e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT' || e.target.contentEditable === 'true';
+            
+            if (e.code === 'Space' && !isInEditor) {
+                e.preventDefault();
+                if (pomodoroIsRunning) {
+                    pausePomodoro();
+                } else {
+                    startPomodoro();
+                }
+            }
+            
+            if (e.key === 'r' && e.ctrlKey) {
+                e.preventDefault();
+                resetPomodoro();
+            }
+        }
+    }
+});
+
+// Make all functions available globally
+window.openProjectModal = openProjectModal;
+window.closeModal = closeModal;
+window.showHelp = showHelp;
+window.closeEditor = closeEditor;
+window.showProjectOverview = showProjectOverview;
+window.toggleArchivedProjects = toggleArchivedProjects;
+window.selectProject = selectProject;
+window.switchProject = switchProject;
+window.createProject = createProject;
+window.addQuickBrief = addQuickBrief;
+window.addQuickNote = addQuickNote;
+window.addQuickCopy = addQuickCopy;
+window.addQuickTask = addQuickTask;
+window.handleEnterKey = handleEnterKey;
+window.openItemEditor = openItemEditor;
+window.findItem = findItem;
+window.handleDragStart = handleDragStart;
+window.handleDragEnd = handleDragEnd;
+window.handleDragOver = handleDragOver;
+window.handleDragLeave = handleDragLeave;
+window.handleDrop = handleDrop;
+window.setupProjectDropZones = setupProjectDropZones;
+window.handleColumnDragOver = handleColumnDragOver;
+window.handleColumnDragLeave = handleColumnDragLeave;
+window.handleColumnDrop = handleColumnDrop;
+window.reorderItemInColumn = reorderItemInColumn;
+window.calculateDropPosition = calculateDropPosition;
+window.showDropPositionIndicator = showDropPositionIndicator;
+window.formatRichText = formatRichText;
+window.createLink = createLink;
+window.copyContentToClipboard = copyContentToClipboard;
+window.insertStandardHeadings = insertStandardHeadings;
+window.openProjectSettings = openProjectSettings;
+window.saveProjectSettings = saveProjectSettings;
+window.exportProjectAsWord = exportProjectAsWord;
+window.exitFocusMode = exitFocusMode;
+window.deleteBrief = deleteBrief;
+window.deleteNote = deleteNote;
+window.deleteCopy = deleteCopy;
+window.showConfirm = showConfirm;
+window.proceedConfirm = proceedConfirm;
+window.cancelConfirm = cancelConfirm;
+window.toggleArchiveProject = toggleArchiveProject;
+window.handleGlobalTaskDragStart = handleGlobalTaskDragStart;
+window.handleGlobalTaskDragEnd = handleGlobalTaskDragEnd;
+window.handleTaskDragOver = handleTaskDragOver;
+window.handleTaskDragLeave = handleTaskDragLeave;
+window.handleTaskDrop = handleTaskDrop;
+window.toggleGlobalTask = toggleGlobalTask;
+window.openGlobalTaskSource = openGlobalTaskSource;
+window.diveInToGlobalSource = diveInToGlobalSource;
+window.promoteToTopThree = promoteToTopThree;
+window.removeTaskFromTopThree = removeTaskFromTopThree;
+window.navigateToBreadcrumb = navigateToBreadcrumb;
+window.clearBreadcrumbs = clearBreadcrumbs;
+window.dismissResumePanel = dismissResumePanel;
+window.resumeWork = resumeWork;
+window.startPomodoro = startPomodoro;
+window.pausePomodoro = pausePomodoro;
+window.resetPomodoro = resetPomodoro;
+window.skipPomodoro = skipPomodoro;
+window.toggleProjectTask = toggleProjectTask;
+window.diveInToProjectSource = diveInToProjectSource;
+
+// Helper render functions
+window.renderBriefs = renderBriefs;
+window.renderNotes = renderNotes;
+window.renderCopy = renderCopy;
+window.renderProjectTasks = renderProjectTasks;
+window.renderGlobalTasks = renderGlobalTasks;
+
+// Debug and recovery functions
+window.debugLocalStorage = debugLocalStorage;
+window.recoverMissingProject = recoverMissingProject;
+window.robustDropZoneSetup = robustDropZoneSetup;
+window.emergencyRecovery = emergencyRecovery;
+window.exportAllData = exportAllData;
+window.saferInitializeApp = saferInitializeApp;
+window.forceDropZoneReset = forceDropZoneReset;
+window.debugDragAndDrop = debugDragAndDrop;
+
+console.log('🔧 Enhanced Creative Project Manager loaded successfully!');
+console.log('');
+console.log('RECOVERY FEATURES:');
+console.log('✓ Enhanced data validation and error handling');
+console.log('✓ Automatic project recovery from breadcrumbs');
+console.log('✓ Robust drag & drop with auto-healing');
+console.log('✓ Safe JSON serialization with fallbacks');
+console.log('✓ Backup and restore functionality');
+console.log('');
+console.log('RECOVERY COMMANDS:');
+console.log('• debugLocalStorage() - Check what data exists');
+console.log('• recoverMissingProject() - Attempt to recover lost projects');
+console.log('• emergencyRecovery() - Full recovery procedure');
+console.log('• exportAllData() - Export all data as backup');
+console.log('• forceDropZoneReset() - Fix drop zone issues');
+console.log('• debugDragAndDrop() - Debug drag & drop problems');
+console.log('');
+console.log('FEATURES:');
+console.log('✓ Rich text client briefs with document upload (.docx files)');
+console.log('✓ Project export to Word document');
+console.log('✓ Project import from Word document with smart parsing');
+console.log('✓ Global task management system (double-click to open)');
+console.log('✓ Smart breadcrumb trail (screen-width limited)');
+console.log('✓ Brief deletion preserves linked items');
+console.log('✓ Rich text support for notes, copy, and client briefs');
+console.log('✓ Pomodoro timer with focus mode');
+console.log('✓ Context preservation system');
+console.log('✓ Drag and drop between columns to create linked items');
+console.log('✓ Incremental naming for multiple items from same brief');
+console.log('✓ Automatic task name updates when source items are renamed');
+console.log('✓ Smart name updates when moving notes ↔ copy');
+console.log('');
+console.log('DRAG & DROP USAGE:');
+console.log('• Drag briefs → notes/copy to create linked items (auto-numbered)');
+console.log('• Drag notes/copy → tasks to create tasks');
+console.log('• Drag within same column to reorder');
+console.log('• Drag notes ↔ copy to move between columns (name auto-updated)');
+console.log('• Tasks can only be reordered within task column');
+console.log('');
+console.log('SMART FEATURES:');
+console.log('• Multiple notes/copy from same brief: "Brief - note", "Brief - note 2", etc.');
+console.log('• Note → Copy adds "- copy" suffix');
+console.log('• Copy → Note replaces "- copy" with "- note"');
+console.log('• Renaming briefs/notes/copy automatically updates linked task names');
+console.log('');
+console.log('DATA RECOVERY:');
+console.log('• Your "Global prime" project should now be recovered with placeholder content');
+console.log('• Check the project list and look for "Global prime (Recovered)"');
+console.log('• Original structure restored from breadcrumb data');
+console.log('• You may need to re-enter the actual content, but item names and structure are preserved');
+console.log('');
+console.log('Run emergencyRecovery() if you still have issues!');    }).join('');
+}
+
+function renderProjectTasks() {
+    const container = getEl('projectTaskContainer');
+    if (!container || !currentProject) return;
+    
+    if (!currentProject.tasks) currentProject.tasks = [];
+    
+    // Ensure tasks have order values
+    currentProject.tasks.forEach((task, index) => {
+        if (task.order === undefined) {
+            task.order = index;
+        }
+    });
+    
+    // Sort tasks with completed at bottom
+    const sortedTasks = sortTasksWithCompletedAtBottom(currentProject.tasks);
+    
+    if (sortedTasks.length === 0) {
+        container.innerHTML = '<div style="text-align: center; padding: 20px; color: #737373;">No tasks yet</div>';
+        return;
+    }
+    
+    container.innerHTML = sortedTasks.map(task => {
+        const hasSource = task.sourceItemId && task.sourceItemType;
+        let sourceItem = null;
+        if (hasSource) {
+            switch(task.sourceItemType) {
+                case 'brief':
+                    sourceItem = currentProject.briefs.find(b => b.id === task.sourceItemId);
+                    break;
+                case 'note':
+                    sourceItem = currentProject.notes.find(n => n.id === task.sourceItemId);
+                    break;
+                case 'copy':
+                    sourceItem = currentProject.copy.find(c => c.id === task.sourceItemId);
+                    break;
+            }
+        }
+        
+        const linkColor = getLinkColor(task, 'task') || '#10b981';
+        
+        // Safely serialize the task data
+        const serializedTask = safeSerializeItem(task);
+        
+        return `
+            <div class="project-task-item" 
+                 draggable="true"
+                 data-item="${serializedTask}"
+                 data-type="task"
+                 data-id="${task.id}"
+                 ondragstart="handleDragStart(event)"
+                 ondragend="handleDragEnd(event)"
+                 ondblclick="openTaskSource('${task.id}')"
+                 style="
+                    background: white;
+                    border: 1px solid #e5e5e5;
+                    border-left: 3px solid ${linkColor};
+                    border-radius: 4px;
+                    margin-bottom: 12px;
+                    padding: 0px;
+                    position: relative;
+                    cursor: grab;
+                    transition: all 0.2s ease;
+                    ${task.completed ? 'opacity: 0.6;' : ''}
+                 ">
+                
+                <div style="position: absolute; top: 8px; right: 8px; background: #f5f5f5; color: #525252; padding: 2px 6px; border-radius: 2px; font-size: 10px; font-weight: 600; text-transform: uppercase;">Task</div>
+                
+                <div style="display: flex; gap: 0px; align-items: flex-start; margin-bottom: 6px; padding: 0px; margin: 0px;">
+                    <div style="background-color: transparent; border: none; margin: 0; margin-left: 39px; margin-top: 5px; padding: 0; flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;">
+                        <input type="checkbox" 
+                               ${task.completed ? 'checked' : ''}
+                               onclick="event.stopPropagation(); toggleProjectTask('${task.id}')"
+                               style="width: 16px; height: 16px; margin: 0; padding: 0; cursor: pointer;">
+                    </div>
+                    <div style="flex: 1; min-width: 0; margin: 0; padding: 0; padding-left: 8px;">
+                        <div style="font-weight: 600; color: #171717; font-size: 14px; line-height: 1.4; margin: 0; padding: 0; ${task.completed ? 'text-decoration: line-through;' : ''}">${task.title}</div>
+                    </div>
+                </div>
+                
+                <div style="position: absolute; left: 8px; top: 16px;">
+                    <div class="grab-handle"></div>
+                </div>
+                
+                <div style="font-size: 12px; color: #737373; margin-bottom: 8px; padding-left: 63px; ${task.completed ? 'text-decoration: line-through;' : ''}">
+                    Created: ${formatDate(task.createdAt)}
+                    ${hasSource && sourceItem ? ` • From: "${sourceItem.title}"` : ''}
+                    ${task.completed && task.completedAt ? ` • Completed: ${formatDate(task.completedAt)}` : ''}
+                </div>
+                
+                ${task.content ? `
+                    <div style="margin: 6px 0; color: #525252; line-height: 1.4; font-size: 13px; padding-left: 63px; ${task.completed ? 'text-decoration: line-through;' : ''}">
+                        ${truncateContent(task.content)}
+                    </div>
+                ` : ''}
+                
+                <div style="font-size: 11px; color: #a3a3a3; font-style: italic; margin-top: 8px; margin-bottom: 8px; padding-left: 63px; padding-right: 8px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>${hasSource ? 'Double-click to open source' : 'Double-click to edit'} • Drag to reorder within tasks</span>
+                    <div style="display: flex; gap: 8px;">
+                        ${hasSource && (task.sourceItemType === 'note' || task.sourceItemType === 'copy') ? `
+                            <span style="background: #fce7f3; color: #be185d; padding: 2px 6px; border-radius: 2px; font-size: 10px; font-weight: 600; text-transform: uppercase; cursor: pointer;" onclick="event.stopPropagation(); diveInToProjectSource('${task.id}')" title="Open in focus mode with Pomodoro">
+                                Dive In
+                            </span>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function findItem(itemId, itemType) {
+    if (!currentProject) return null;
+    
+    switch(itemType) {
+        case 'brief':
+            return currentProject.briefs.find(item => item.id == itemId);
+        case 'note':
+            return currentProject.notes.find(item => item.id == itemId);
+        case 'copy':
+            return currentProject.copy.find(item => item.id == itemId);
+        case 'task':
+            return currentProject.tasks.find(item => item.id == itemId);
+        default:
+            return null;
+    }
+}
+
+function toggleProjectTask(taskId) {
+    const task = currentProject.tasks.find(t => t.id == taskId);
+    if (task) {
+        task.completed = !task.completed;
+        // Add completion timestamp when completed
+        if (task.completed) {
+            task.completedAt = getCurrentTimestamp();
+        } else {
+            delete task.completedAt;
+        }
+        saferSaveProjects();
+        renderProjectTasks();
+        
+        // Update global tasks if this affects them
+        renderGlobalTasks();
+    }
+}
+
+function diveInToProjectSource(taskId) {
+    console.log('Diving into project source:', taskId);
+    if (!currentProject) {
+        console.log('No current project');
+        return;
+    }
+    
+    // Find the task
+    const task = currentProject.tasks.find(t => t.id == taskId);
+    if (!task) {
+        console.log('Task not found in project');
+        return;
+    }
+    
+    // Only proceed if the source is a note or copy
+    if (!task.sourceItemId || !task.sourceItemType || (task.sourceItemType !== 'note' && task.sourceItemType !== 'copy')) {
+        console.log('Task source is not a note or copy, cannot dive in');
+        showNotification('Dive In is only available for tasks created from notes or copy');
+        return;
+    }
+    
+    // Find the source item
+    let sourceItem = null;
+    switch(task.sourceItemType) {
+        case 'note':
+            sourceItem = currentProject.notes.find(n => n.id === task.sourceItemId);
+            break;
+        case 'copy':
+            sourceItem = currentProject.copy.find(c => c.id === task.sourceItemId);
+            break;
+    }
+    
+    if (sourceItem) {
+        console.log('Found source item, entering focus mode:', sourceItem);
+        // Open the item editor
+        openItemEditor(sourceItem, task.sourceItemType);
+        
+        // Wait for editor to be ready, then enter focus mode and start pomodoro
+        setTimeout(() => {
+            // Reset pomodoro to work session if it's currently a break
+            if (pomodoroIsBreak) {
+                pomodoroIsBreak = false;
+                pomodoroTimeLeft = 25 * 60;
+                updatePomodoroDisplay();
+                updatePomodoroStatus();
+            }
+            
+            // Start the pomodoro and enter focus mode
+            if (!pomodoroIsRunning) {
+                startPomodoro();
+            }
+            
+            showNotification(`Diving into "${sourceItem.title}" - Focus mode activated!`);
+        }, 300);
+    } else {
+        console.log('Source item not found in project');
+        showNotification('Source item not found');
+    }
+}
+
+function updateProjectSelector() {
+    const select = getEl('projectSelect');
+    const activeProjects = projects.filter(project => !project.archived);
+    select.innerHTML = '<option value="">Select a project...</option>' +
+        activeProjects.map(project => `<option value="${project.id}">${project.name}</option>`).join('');
+}
+
+function updateSettingsButton() {
+    const settingsBtn = getEl('projectSettingsBtn');
+    const archiveBtn = getEl('archiveToggle');
+    
+    if (currentProject) {
+        setDisplay('projectSettingsBtn', 'inline-block');
+        setDisplay('archiveToggle', 'none');
+    } else {
+        setDisplay('projectSettingsBtn', 'none');
+        setDisplay('archiveToggle', 'inline-block');
+    }
+}
+
+function openProjectSettings(projectId) {
+    const project = projectId ? projects.find(p => p.id === projectId) : currentProject;
+    if (!project) return;
+    
+    setValue('settingsProjectName', project.name);
+    setValue('settingsColorTheme', project.colorTheme || 'blue');
+    setDisplay('projectSettingsModal', 'block');
+    
+    // Store which project we're editing
+    window.currentSettingsProject = project;
+}
+
+function saveProjectSettings() {
+    const project = window.currentSettingsProject;
+    if (!project) return;
+    
+    const newName = getValue('settingsProjectName');
+    const newTheme = getValue('settingsColorTheme');
+    
+    if (newName) {
+        project.name = newName;
+        project.colorTheme = newTheme;
+        
+        saferSaveProjects();
+        updateProjectSelector();
+        closeModal('projectSettingsModal');
+        
+        // Update display
+        if (currentProject && currentProject.id === project.id) {
+            // Re-apply theme
+            const dashboard = getEl('dashboard');
+            colorThemes.forEach(theme => {
+                dashboard.classList.remove(`project-theme-${theme}`);
+            });
+            dashboard.classList.add(`project-theme-${newTheme}`);
+        }
+        
+        renderProjectOverview();
+        window.currentSettingsProject = null;
+    }
+}
+
+// ===== PROJECT EXPORT FUNCTIONALITY =====
+
+function exportProjectAsWord() {
+    const project = window.currentSettingsProject;
+    if (!project) return;
+    
+    try {
+        showNotification('Generating project export...');
+        
+        // Generate HTML content for the entire project
+        const projectHtml = generateProjectHtml(project);
+        
+        // Create a downloadable HTML file (Word-compatible)
+        const blob = new Blob([projectHtml], { type: 'application/msword' });
+        const url = URL.createObjectURL(blob);
+        
+        // Create download link
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${project.name.replace(/[^a-z0-9]/gi, '_')}_Export.doc`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Clean up
+        URL.revokeObjectURL(url);
+        
+        showNotification('Project exported successfully!');
+    } catch (error) {
+        console.error('Export error:', error);
+        showNotification('Export failed. Please try again.');
+    }
+}
+
+function generateProjectHtml(project) {
+    const createdDate = project.createdAt ? formatDate(project.createdAt) : 'Unknown';
+    
+    // Count stats
+    const briefsCount = project.briefs ? project.briefs.length : 0;
+    const notesCount = project.notes ? project.notes.length : 0;
+    const copyCount = project.copy ? project.copy.length : 0;
+    const totalTasks = project.tasks ? project.tasks.length : 0;
+    const completedTasks = project.tasks ? project.tasks.filter(t => t.completed).length : 0;
+    
+    let html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>${project.name} - Project Export</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; margin: 40px; }
+        h1 { color: #333; border-bottom: 3px solid #007acc; padding-bottom: 10px; }
+        h2 { color: #555; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-top: 30px; }
+        h3 { color: #666; margin-top: 25px; }
+        .project-stats { background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0; }
+        .item-section { margin: 20px 0; padding: 15px; border-left: 4px solid #007acc; background: #fafafa; }
+        .proposition { background: #e8f4fd; padding: 10px; border-left: 3px solid #007acc; margin: 10px 0; }
+        .client-brief { background: #fff9e6; padding: 10px; border-left: 3px solid #ffa500; margin: 10px 0; }
+        .task-list { margin: 10px 0; }
+        .task-item { margin: 5px 0; padding: 5px; background: white; border-left: 2px solid #28a745; }
+        .task-completed { text-decoration: line-through; opacity: 0.7; }
+        .linked-indicator { color: #007acc; font-style: italic; font-size: 0.9em; }
+        .meta-info { color: #666; font-size: 0.9em; margin: 5px 0; }
+        page-break-before: always;
+    </style>
+</head>
+<body>
+    <h1>${project.name}</h1>
+    
+    <div class="project-stats">
+        <strong>Project Overview</strong><br>
+        Created: ${createdDate}<br>
+        Description: ${project.description || 'No description provided'}<br><br>
+        
+        <strong>Content Summary:</strong><br>
+        • ${briefsCount} Brief${briefsCount !== 1 ? 's' : ''}<br>
+        • ${notesCount} Note${notesCount !== 1 ? 's' : ''}<br>
+        • ${copyCount} Copy item${copyCount !== 1 ? 's' : ''}<br>
+        • ${totalTasks} Task${totalTasks !== 1 ? 's' : ''} (${completedTasks} completed)<br>
+    </div>
+`;
+
+    // Export Briefs
+    if (project.briefs && project.briefs.length > 0) {
+        html += `<h2>Briefs (${project.briefs.length})</h2>`;
+        
+        project.briefs.forEach(brief => {
+            const linkedItems = getLinkedItemsForBrief(project, brief.id);
+            
+            html += `<div class="item-section">`;
+            html += `<h3>${brief.title}</h3>`;
+            html += `<div class="meta-info">Created: ${formatDate(brief.createdAt)}</div>`;
+            
+            if (brief.proposition && brief.proposition.trim()) {
+                html += `<div class="proposition"><strong>Proposition:</strong><br>${brief.proposition.replace(/\n/g, '<br>')}</div>`;
+            }
+            
+            if (brief.clientBriefRich && brief.clientBriefRich.trim()) {
+                html += `<div class="client-brief"><strong>Client Brief:</strong><br>${brief.clientBriefRich}</div>`;
+            } else if (brief.clientBrief && brief.clientBrief.trim()) {
+                html += `<div class="client-brief"><strong>Client Brief:</strong><br>${brief.clientBrief.replace(/\n/g, '<br>')}</div>`;
+            }
+            
+            if (linkedItems.notes.length > 0 || linkedItems.copy.length > 0) {
+                html += `<div class="linked-indicator">Linked Items: `;
+                const linkedDesc = [];
+                if (linkedItems.notes.length > 0) linkedDesc.push(`${linkedItems.notes.length} note${linkedItems.notes.length !== 1 ? 's' : ''}`);
+                if (linkedItems.copy.length > 0) linkedDesc.push(`${linkedItems.copy.length} copy item${linkedItems.copy.length !== 1 ? 's' : ''}`);
+                html += linkedDesc.join(', ') + `</div>`;
+            }
+            
+            html += `</div>`;
+        });
+    }
+    
+    // Export Notes
+    if (project.notes && project.notes.length > 0) {
+        html += `<h2>Notes (${project.notes.length})</h2>`;
+        
+        project.notes.forEach(note => {
+            const linkedBrief = note.linkedBriefId ? project.briefs.find(b => b.id === note.linkedBriefId) : null;
+            const linkedTasks = project.tasks ? project.tasks.filter(t => t.sourceItemType === 'note' && t.sourceItemId === note.id) : [];
+            
+            html += `<div class="item-section">`;
+            html += `<h3>${note.title}</h3>`;
+            html += `<div class="meta-info">Created: ${formatDate(note.createdAt)}</div>`;
+            
+            if (linkedBrief) {
+                html += `<div class="linked-indicator">Linked to brief: "${linkedBrief.title}"</div>`;
+            }
+            
+            if (note.richContent && note.richContent.trim()) {
+                html += `<div>${note.richContent}</div>`;
+            } else if (note.content && note.content.trim()) {
+                html += `<div>${note.content.replace(/\n/g, '<br>')}</div>`;
+            }
+            
+            if (linkedTasks.length > 0) {
+                html += `<div class="task-list"><strong>Related Tasks:</strong>`;
+                linkedTasks.forEach(task => {
+                    html += `<div class="task-item ${task.completed ? 'task-completed' : ''}">• ${task.title}</div>`;
+                });
+                html += `</div>`;
+            }
+            
+            html += `</div>`;
+        });
+    }
+    
+    // Export Copy
+    if (project.copy && project.copy.length > 0) {
+        html += `<h2>Copy (${project.copy.length})</h2>`;
+        
+        project.copy.forEach(copy => {
+            const linkedBrief = copy.linkedBriefId ? project.briefs.find(b => b.id === copy.linkedBriefId) : null;
+            const linkedTasks = project.tasks ? project.tasks.filter(t => t.sourceItemType === 'copy' && t.sourceItemId === copy.id) : [];
+            
+            html += `<div class="item-section">`;
+            html += `<h3>${copy.title}</h3>`;
+            html += `<div class="meta-info">Created: ${formatDate(copy.createdAt)}</div>`;
+            
+            if (linkedBrief) {
+                html += `<div class="linked-indicator">Linked to brief: "${linkedBrief.title}"</div>`;
+            }
+            
+            if (copy.richContent && copy.richContent.trim()) {
+                html += `<div>${copy.richContent}</div>`;
+            } else if (copy.content && copy.content.trim()) {
+                html += `<div>${copy.content.replace(/\n/g, '<br>')}</div>`;
+            }
+            
+            if (linkedTasks.length > 0) {
+                html += `<div class="task-list"><strong>Related Tasks:</strong>`;
+                linkedTasks.forEach(task => {
+                    html += `<div class="task-item ${task.completed ? 'task-completed' : ''}">• ${task.title}</div>`;
+                });
+                html += `</div>`;
+            }
+            
+            html += `</div>`;
+        });
+    }
+    
+    // Export Tasks
+    if (project.tasks && project.tasks.length > 0) {
+        html += `<h2>Tasks (${project.tasks.length})</h2>`;
+        
+        const pendingTasks = project.tasks.filter(t => !t.completed);
+        const completedTasks = project.tasks.filter(t => t.completed);
+        
+        if (pendingTasks.length > 0) {
+            html += `<h3>Pending Tasks (${pendingTasks.length})</h3>`;
+            pendingTasks.forEach(task => {
+                const sourceItem = getTaskSourceItem(project, task);
+                
+                html += `<div class="item-section">`;
+                html += `<h4>${task.title}</h4>`;
+                html += `<div class="meta-info">Created: ${formatDate(task.createdAt)}</div>`;
+                
+                if (sourceItem) {
+                    html += `<div class="linked-indicator">Source: ${task.sourceItemType} "${sourceItem.title}"</div>`;
+                }
+                
+                if (task.content && task.content.trim()) {
+                    html += `<div>${task.content.replace(/\n/g, '<br>')}</div>`;
+                }
+                
+                html += `</div>`;
+            });
+        }
+        
+        if (completedTasks.length > 0) {
+            html += `<h3>Completed Tasks (${completedTasks.length})</h3>`;
+            completedTasks.forEach(task => {
+                const sourceItem = getTaskSourceItem(project, task);
+                
+                html += `<div class="item-section">`;
+                html += `<h4 class="task-completed">${task.title}</h4>`;
+                html += `<div class="meta-info">Created: ${formatDate(task.createdAt)} | Completed: ${task.completedAt ? formatDate(task.completedAt) : 'Unknown'}</div>`;
+                
+                if (sourceItem) {
+                    html += `<div class="linked-indicator">Source: ${task.sourceItemType} "${sourceItem.title}"</div>`;
+                }
+                
+                if (task.content && task.content.trim()) {
+                    html += `<div class="task-completed">${task.content.replace(/\n/g, '<br>')}</div>`;
+                }
+                
+                html += `</div>`;
+            });
+        }
+    }
+    
+    html += `
+    <br><br>
+    <hr>
+    <div class="meta-info" style="text-align: center;">
+        Exported from Creative Project Manager on ${new Date().toLocaleDateString()}
+    </div>
+</body>
+</html>`;
+    
+    return html;
+}
+
+function getLinkedItemsForBrief(project, briefId) {
+    const notes = project.notes ? project.notes.filter(n => n.linkedBriefId === briefId) : [];
+    const copy = project.copy ? project.copy.filter(c => c.linkedBriefId === briefId) : [];
+    return { notes, copy };
+}
+
+function getTaskSourceItem(project, task) {
+    if (!task.sourceItemId || !task.sourceItemType) return null;
+    
+    switch(task.sourceItemType) {
+        case 'brief':
+            return project.briefs ? project.briefs.find(b => b.id === task.sourceItemId) : null;
+        case 'note':
+            return project.notes ? project.notes.find(n => n.id === task.sourceItemId) : null;
+        case 'copy':
+            return project.copy ? project.copy.find(c => c.id === task.sourceItemId) : null;
+        default:
+            return null;
+    }
+}
+
+// ===== IMPROVED SAVE PROJECTS FUNCTION =====
+
+function saferSaveProjects() {
+    try {
+        // First, validate the projects array
+        if (!Array.isArray(projects)) {
+            console.error('Projects is not an array!', projects);
+            return false;
+        }
+        
+        // Check each project for issues
+        const validatedProjects = projects.filter(project => {
+            if (!project || typeof project !== 'object') {
+                console.warn('Invalid project object:', project);
+                return false;
+            }
+            
+            if (!project.id || !project.name) {
+                console.warn('Project missing required fields:', project);
+                return false;
+            }
+            
+            return true;
+        });
+        
+        if (validatedProjects.length !== projects.length) {
+            console.warn(`Filtered out ${projects.length - validatedProjects.length} invalid projects`);
+            projects = validatedProjects;
+        }
+        
+        // Use the safer storage function
+        const success = saveToStorage('projects', projects);
+        if (success) {
+            console.log(`✅ Successfully saved ${projects.length} projects`);
+            
+            // Clean up old completed tasks whenever we save
+            setTimeout(() => {
+                cleanupOldCompletedTasks();
+            }, 100);
+            
+            return true;
+        } else {
+            console.error('Failed to save projects');
+            return false;
+        }
+        
+    } catch (error) {
+        console.error('Error in saferSaveProjects:', error);
+        return false;
+    }
+}
+
+// Autosave functions
+function updateAutosaveStatus(status) {
+    const autosaveText = getEl('autosaveText');
+    if (autosaveText) {
+        switch(status) {
+            case 'saving':
+                autosaveText.textContent = 'Saving...';
+                autosaveText.style.color = '#171717';
+                break;
+            case 'saved':
+                autosaveText.textContent = 'Saved';
+                autosaveText.style.color = '#16a34a';
+                // Reset to ready after 2 seconds
+                setTimeout(() => {
+                    if (autosaveText) {
+                        autosaveText.textContent = 'Ready';
+                        autosaveText.style.color = '#737373';
+                    }
+                }, 2000);
+                break;
+            case 'changes':
+                autosaveText.textContent = 'Unsaved changes...';
+                autosaveText.style.color = '#f59e0b';
+                break;
+            default:
+                autosaveText.textContent = 'Ready';
+                autosaveText.style.color = '#737373';
+        }
+    }
+}
+
+function debouncedAutosave() {
+    // Clear existing timeout
+    if (autosaveTimeout) {
+        clearTimeout(autosaveTimeout);
+    }
+    
+    // Show unsaved changes status
+    hasUnsavedChanges = true;
+    updateAutosaveStatus('changes');
+    
+    // Set new timeout for autosave
+    autosaveTimeout = setTimeout(() => {
+        if (hasUnsavedChanges) {
+            autosaveItem();
+        }
+    }, 1500); // Save after 1.5 seconds of inactivity
+}
+
+function autosaveItem() {
+    if (!currentEditingItem) return;
+    
+    updateAutosaveStatus('saving');
+    
+    const newTitle = getValue('editorItemTitle');
+    
+    if (!newTitle) {
+        updateAutosaveStatus('ready');
+        return;
+    }
+    
+    const oldTitle = currentEditingItem.title;
+    const titleChanged = oldTitle !== newTitle;
+    
+    // CRITICAL: Find and update the actual item in the project arrays
+    let actualItem = null;
+    let itemArray = null;
+    
+    switch(currentEditingType) {
+        case 'brief':
+            itemArray = currentProject.briefs;
+            actualItem = currentProject.briefs.find(item => item.id === currentEditingItem.id);
+            break;
+        case 'note':
+            itemArray = currentProject.notes;
+            actualItem = currentProject.notes.find(item => item.id === currentEditingItem.id);
+            break;
+        case 'copy':
+            itemArray = currentProject.copy;
+            actualItem = currentProject.copy.find(item => item.id === currentEditingItem.id);
+            break;
+        case 'task':
+            itemArray = currentProject.tasks;
+            actualItem = currentProject.tasks.find(item => item.id === currentEditingItem.id);
+            break;
+    }
+    
+    if (!actualItem) {
+        console.error('Could not find actual item in project arrays');
+        updateAutosaveStatus('ready');
+        return;
+    }
+    
+    // Update both the editing item and the actual item
+    currentEditingItem.title = newTitle;
+    actualItem.title = newTitle;
+    actualItem.lastModified = getCurrentTimestamp();
+    
+    console.log(`Title updated: "${oldTitle}" → "${newTitle}"`);
+    
+    // Check if content has actually changed to trigger reordering
+    let contentChanged = titleChanged;
+    
+    // Handle different item types
+    if (currentEditingType === 'brief') {
+        // Save brief-specific fields with rich text support
+        const oldProposition = actualItem.proposition || '';
+        const oldClientBrief = actualItem.clientBrief || '';
+        const oldClientBriefRich = actualItem.clientBriefRich || '';
+        
+        const newProposition = getValue('editorProposition');
+        const clientBriefField = getEl('editorClientBrief');
+        const newClientBriefRich = clientBriefField ? clientBriefField.innerHTML : '';
+        const newClientBrief = htmlToText(newClientBriefRich);
+        
+        contentChanged = contentChanged || 
+                        (oldProposition !== newProposition) || 
+                        (oldClientBrief !== newClientBrief) ||
+                        (oldClientBriefRich !== newClientBriefRich);
+        
+        // Update bothasync function processProjectImportDocument(file) {
+    try {
+        showNotification('Analyzing document for project import...');
+        
+        if (!mammothLibrary) {
+            throw new Error('Document processing library not available');
+        }
+        
+        // Read file as array buffer
+        const arrayBuffer = await file.arrayBuffer();
+        
+        // Extract HTML content
+        const result = await mammothLibrary.convertToHtml({arrayBuffer: arrayBuffer});
+        
+        if (result.value && result.value.trim()) {
+            // Parse the document and extract structured content
+            const projectData = parseDocumentForProject(result.value, file.name);
+            
+            // Populate the form with extracted data
+            populateProjectForm(projectData);
+            
+            showNotification(`Document processed! Found ${projectData.briefs.length} potential briefs, ${projectData.notes.length} notes, and ${projectData.copy.length} copy items.`);
+        } else {
+            showNotification('No content found in document');
+        }
+        
+    } catch (error) {
+        console.error('Error processing import document:', error);
+        showNotification('Error processing document. Please try again or create project manually.');
+    }
+}
+
+function parseDocumentForProject(html, fileName) {
+    // Create a temporary div to parse the HTML
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = html;
+    
+    // Extract project name from filename or first heading
+    let projectName = fileName.replace(/\.(docx?|doc)$/i, '').replace(/[_-]/g, ' ');
+    const firstHeading = tempDiv.querySelector('h1, h2, h3');
+    if (firstHeading && firstHeading.textContent.trim()) {
+        projectName = firstHeading.textContent.trim();
+        firstHeading.remove(); // Remove so it's not processed again
+    }
+    
+    // Initialize collections
+    const projectData = {
+        name: projectName,
+        description: 'Imported from Word document',
+        briefs: [],
+        notes: [],
+        copy: []
+    };
+    
+    // Get all content sections
+    const sections = extractDocumentSections(tempDiv);
+    
+    // Analyze and categorize sections
+    sections.forEach(section => {
+        const category = categorizeSection(section);
+        const item = {
+            id: generateId(),
+            title: section.title || 'Untitled',
+            content: section.content || '',
+            createdAt: getCurrentTimestamp(),
+            order: 0
+        };
+        
+        switch(category) {
+            case 'brief':
+                // Try to split content into proposition and client brief
+                const briefParts = splitBriefContent(section.content);
+                item.proposition = briefParts.proposition;
+                item.clientBrief = briefParts.clientBrief;
+                item.clientBriefRich = briefParts.clientBriefRich;
+                item.linkColor = getNextLinkColor();
+                item.type = 'brief';
+                delete item.content; // Briefs don't use generic content
+                projectData.briefs.push(item);
+                break;
+                
+            case 'note':
+                item.richContent = section.richContent || textToHtml(section.content);
+                item.type = 'note';
+                projectData.notes.push(item);
+                break;
+                
+            case 'copy':
+                item.richContent = section.richContent || textToHtml(section.content);
+                item.type = 'copy';
+                projectData.copy.push(item);
+                break;
+        }
+    });
+    
+    return projectData;
+}
+
+function extractDocumentSections(container) {
+    const sections = [];
+    const headings = container.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    
+    if (headings.length === 0) {
+        // No headings found, treat as single section
+        const content = container.innerHTML.trim();
+        const textContent = container.textContent.trim();
+        if (textContent) {
+            sections.push({
+                title: 'Imported Content',
+                content: htmlToText(content),
+                richContent: content
+            });
+        }
+        return sections;
+    }
+    
+    headings.forEach((heading, index) => {
+        const title = heading.textContent.trim();
+        let content = '';
+        let richContent = '';
+        
+        // Get content between this heading and the next
+        let currentElement = heading.nextElementSibling;
+        const nextHeading = headings[index + 1];
+        
+        while (currentElement && currentElement !== nextHeading) {
+            richContent += currentElement.outerHTML;
+            content += currentElement.textContent + '\n';
+            currentElement = currentElement.nextElementSibling;
+        }
+        
+        if (title && (content.trim() || richContent.trim())) {
+            sections.push({
+                title: title,
+                content: content.trim(),
+                richContent: richContent.trim()
+            });
+        }
+    });
+    
+    return sections;
+}
+
+function categorizeSection(section) {
+    const title = section.title.toLowerCase();
+    const content = section.content.toLowerCase();
+    
+    // Keywords that suggest different content types
+    const briefKeywords = ['brief', 'proposal', 'proposition', 'project brief', 'creative brief', 'brand brief'];
+    const noteKeywords = ['notes', 'research', 'insights', 'analysis', 'thinking', 'ideas', 'brainstorm'];
+    const copyKeywords = ['copy', 'content', 'text', 'headline', 'tagline', 'script', 'writing'];
+    
+    // Check title first
+    if (briefKeywords.some(keyword => title.includes(keyword))) {
+        return 'brief';
+    }
+    if (noteKeywords.some(keyword => title.includes(keyword))) {
+        return 'note';
+    }
+    if (copyKeywords.some(keyword => title.includes(keyword))) {
+        return 'copy';
+    }
+    
+    // Check content for clues
+    if (content.includes('proposition') || content.includes('objective') || content.includes('target audience')) {
+        return 'brief';
+    }
+    if (content.includes('insight') || content.includes('research') || content.includes('analysis')) {
+        return 'note';
+    }
+    
+    // Default categorization based on content length and structure
+    if (section.content.length < 500) {
+        return 'copy'; // Shorter content likely to be copy
+    } else {
+        return 'note'; // Longer content likely to be notes
+    }
+}
+
+function splitBriefContent(content) {
+    const lines = content.split('\n').filter(line => line.trim());
+    let proposition = '';
+    let clientBrief = '';
+    
+    // Look for proposition markers
+    const propMarkers = ['proposition:', 'prop:', 'objective:', 'goal:'];
+    let propIndex = -1;
+    
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].toLowerCase();
+        if (propMarkers.some(marker => line.includes(marker))) {
+            propIndex = i;
+            break;
+        }
+    }
+    
+    if (propIndex >= 0) {
+        // Found proposition marker
+        const propLine = lines[propIndex];
+        const colonIndex = propLine.indexOf(':');
+        if (colonIndex >= 0) {
+            proposition = propLine.substring(colonIndex + 1).trim();
+        }
+        
+        // Everything else is client brief
+        const otherLines = [...lines.slice(0, propIndex), ...lines.slice(propIndex + 1)];
+        clientBrief = otherLines.join('\n');
+    } else {
+        // No clear proposition found, put everything in client brief
+        clientBrief = content;
+    }
+    
+    return {
+        proposition: proposition,
+        clientBrief: clientBrief,
+        clientBriefRich: textToHtml(clientBrief)
+    };
+}
+
+function populateProjectForm(projectData) {
+    // Set project name and description
+    setValue('newProjectName', projectData.name);
+    setValue('newProjectDescription', projectData.description);
+    
+    // Store the parsed data for when the project is created
+    window.pendingProjectImport = projectData;
+    
+    // Update the import zone to show success
+    const importZone = document.querySelector('.project-import-zone');
+    if (importZone) {
+        importZone.style.borderColor = '#16a34a';
+        importZone.style.background = '#f0fdf4';
+        importZone.innerHTML = `
+            <div style="color: #16a34a; font-size: 16px; margin-bottom: 8px;">✅ Document Imported Successfully!</div>
+            <div style="font-size: 13px; opacity: 0.8;">
+                Found: ${projectData.briefs.length} briefs, ${projectData.notes.length} notes, ${projectData.copy.length} copy items
+            </div>
+            <div style="font-size: 12px; opacity: 0.6; margin-top: 8px;">
+                Click "Create Project" to proceed with the imported content
+            </div>
+        `;
+    }
+}
+
+function clearProjectImportZone() {
+    window.pendingProjectImport = null;
+    
+    const importZone = document.querySelector('.project-import-zone');
+    if (importZone) {
+        importZone.style.borderColor = '#d1d5db';
+        importZone.style.background = '#f9fafb';
+        
+        const isLibraryAvailable = mammothLibrary !== null;
+        importZone.innerHTML = `
+            <div style="font-size: 16px; margin-bottom: 8px;">📄 ${isLibraryAvailable ? 'Import Project from Word Document' : 'Document import not available'}</div>
+            <div style="font-size: 13px; opacity: 0.8; margin-bottom: 12px;">${isLibraryAvailable ? 'Drop a .docx file here or click to browse' : 'Document processing library required'}</div>
+            <div style="font-size: 12px; opacity: 0.6;">The document will be analyzed and content will be organized into briefs, notes, and copy automatically</div>
+            ${isLibraryAvailable ? '<input type="file" accept=".docx,.doc" style="display: none;" class="project-import-input">' : ''}
+        `;
+    }
+}
+
+// Quick add functions for input fields
+function addQuickBrief() {
+    if (!currentProject) {
+        alert('Please select a project first');
+        return;
+    }
+    
+    const title = getValue('briefTitle');
+    if (title) {
+        const linkColor = getNextLinkColor();
+        console.log('Assigning color to new brief:', linkColor, 'Index:', nextLinkColorIndex);
+        
+        const brief = {
+            id: generateId(),
+            title,
+            proposition: '',
+            clientBrief: '',
+            type: 'brief',
+            linkColor: linkColor,
+            order: 0,
+            createdAt: getCurrentTimestamp()
+        };
+        
+        // Update order of existing briefs
+        currentProject.briefs.forEach(existingBrief => {
+            if (existingBrief.order !== undefined) {
+                existingBrief.order += 1;
+            }
+        });
+        
+        currentProject.briefs.unshift(brief);
+        saferSaveProjects();
+        renderBriefs();
+        
+        // Clear input
+        setValue('briefTitle', '');
+        
+        console.log('Created brief with color:', brief.linkColor);
+    }
+}
+
+function addQuickNote() {
+    if (!currentProject) {
+        alert('Please select a project first');
+        return;
+    }
+    
+    const title = getValue('noteTitle');
+    if (title) {
+        const note = {
+            id: generateId(),
+            title,
+            content: '',
+            type: 'note',
+            order: 0,
+            createdAt: getCurrentTimestamp()
+        };
+        
+        // Update order of existing notes
+        currentProject.notes.forEach(existingNote => {
+            if (existingNote.order !== undefined) {
+                existingNote.order += 1;
+            }
+        });
+        
+        currentProject.notes.unshift(note);
+        saferSaveProjects();
+        renderNotes();
+        
+        // Clear input
+        setValue('noteTitle', '');
+    }
+}
+
+function addQuickCopy() {
+    if (!currentProject) {
+        alert('Please select a project first');
+        return;
+    }
+    
+    const title = getValue('copyTitle');
+    if (title) {
+        const copy = {
+            id: generateId(),
+            title,
+            content: '',
+            type: 'copy',
+            order: 0,
+            createdAt: getCurrentTimestamp()
+        };
+        
+        // Update order of existing copy
+        currentProject.copy.forEach(existingCopy => {
+            if (existingCopy.order !== undefined) {
+                existingCopy.order += 1;
+            }
+        });
+        
+        currentProject.copy.unshift(copy);
+        saferSaveProjects();
+        renderCopy();
+        
+        // Clear input
+        setValue('copyTitle', '');
+    }
+}
+
+function addQuickTask() {
+    if (!currentProject) {
+        alert('Please select a project first');
+        return;
+    }
+    
+    const title = getValue('taskTitle');
+    if (title) {
+        const task = {
+            id: generateId(),
+            title,
+            content: '',
+            type: 'task',
+            completed: false,
+            order: 0,
+            createdAt: getCurrentTimestamp()
+        };
+        
+        // Update order of existing tasks
+        currentProject.tasks.forEach(existingTask => {
+            if (existingTask.order !== undefined) {
+                existingTask.order += 1;
+            }
+        });
+        
+        currentProject.tasks.unshift(task);
+        saferSaveProjects();
+        renderProjectTasks();
+        
+        // Clear input
+        setValue('taskTitle', '');
+    }
+}
+
+// Handle Enter key press in input fields
+function handleEnterKey(event, type) {
+    if (event.key === 'Enter') {
+        switch(type) {
+            case 'brief':
+                addQuickBrief();
+                break;
+            case 'note':
+                addQuickNote();
+                break;
+            case 'copy':
+                addQuickCopy();
+                break;
+            case 'task':
+                addQuickTask();
+                break;
+        }
+    }
+}
+
+// ===== ENHANCED RENDER FUNCTIONS =====
+
+function renderProject() {
+    if (!currentProject) return;
+    
+    console.log('Rendering project:', currentProject.name);
+    
+    // Clean up existing drop zones first
+    cleanupProjectDropZones();
+    
+    renderBriefs();
+    renderNotes();
+    renderCopy();
+    renderProjectTasks();
+    
+    // Use robust drop zone setup
+    setTimeout(() => {
+        robustDropZoneSetup();
+    }, 100);
+}
+
+function renderProjectOverview() {
+    const grid = getEl('projectGrid');
+    if (!grid) return;
+    
+    // Ensure projects is an array
+    if (!Array.isArray(projects)) {
+        projects = [];
+    }
+    
+    // Filter projects based on archive status
+    const visibleProjects = projects.filter(project => 
+        showArchived ? true : !project.archived
+    );
+    
+    if (visibleProjects.length === 0) {
+        grid.innerHTML = `
+            <div style="grid-column: 1 / -1; text-align: center; padding: 60px 20px; color: #a3a3a3;">
+                <div style="font-size: 14px; margin-bottom: 8px;">No projects</div>
+                <div style="font-size: 12px; color: #d4d4d4;">Create your first project to get started</div>
+            </div>
+        `;
+    } else {
+        grid.innerHTML = visibleProjects.map(project => {
+            // Safety checks for project properties
+            const totalTasks = (project.tasks && Array.isArray(project.tasks)) ? project.tasks.length : 0;
+            const completedTasks = (project.tasks && Array.isArray(project.tasks)) ? project.tasks.filter(t => t && t.completed).length : 0;
+            const colorTheme = project.colorTheme || 'blue';
+            const briefsCount = (project.briefs && Array.isArray(project.briefs)) ? project.briefs.length : 0;
+            const notesCount = (project.notes && Array.isArray(project.notes)) ? project.notes.length : 0;
+            const copyCount = (project.copy && Array.isArray(project.copy)) ? project.copy.length : 0;
+            
+            return `
+                <div class="project-card project-theme-${colorTheme} project-themed ${project.archived ? 'archived-project' : ''}" 
+                     onclick="selectProject(${project.id})">
+                    <div class="project-title">${project.name || 'Untitled Project'}</div>
+                    <div style="color: #737373; font-size: 14px; margin-bottom: 16px;">
+                        ${project.description || 'No description'}
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0;">
+                        <div style="text-align: center; padding: 8px; background: var(--secondary); border-radius: 4px;">
+                            <div style="font-size: 1.5rem; font-weight: 600; color: var(--accent);">${briefsCount}</div>
+                            <div style="font-size: 12px; color: #737373;">Briefs</div>
+                        </div>
+                        <div style="text-align: center; padding: 8px; background: var(--secondary); border-radius: 4px;">
+                            <div style="font-size: 1.5rem; font-weight: 600; color: var(--accent);">${notesCount}</div>
+                            <div style="font-size: 12px; color: #737373;">Notes</div>
+                        </div>
+                        <div style="text-align: center; padding: 8px; background: var(--secondary); border-radius: 4px;">
+                            <div style="font-size: 1.5rem; font-weight: 600; color: var(--accent);">${copyCount}</div>
+                            <div style="font-size: 12px; color: #737373;">Copy</div>
+                        </div>
+                        <div style="text-align: center; padding: 8px; background: var(--secondary); border-radius: 4px;">
+                            <div style="font-size: 1.5rem; font-weight: 600; color: var(--accent);">${totalTasks}</div>
+                            <div style="font-size: 12px; color: #737373;">Tasks</div>
+                        </div>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px;">
+                        <div style="font-size: 12px; color: #737373;">
+                            Created: ${project.createdAt ? formatDate(project.createdAt) : 'Unknown'}
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="archive-btn" onclick="event.stopPropagation(); openProjectSettings(${project.id})" style="background: #171717;">
+                                Settings
+                            </button>
+                            <button class="archive-btn" onclick="event.stopPropagation(); toggleArchiveProject(${project.id})">
+                                ${project.archived ? 'Restore' : 'Archive'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    
+    // Setup delete listeners after rendering
+    setupDeleteListeners();
+    }
+}
+
+function renderBriefs() {
+    const list = getEl('briefsList');
+    if (!list) {
+        console.warn('briefsList element not found');
+        return;
+    }
+    
+    if (!currentProject.briefs) currentProject.briefs = [];
+    
+    // Ensure briefs have order values
+    currentProject.briefs.forEach((brief, index) => {
+        if (brief.order === undefined) {
+            brief.order = index;
+        }
+        // Ensure required properties exist
+        if (!brief.id) brief.id = generateId();
+        if (!brief.title) brief.title = 'Untitled Brief';
+        if (!brief.createdAt) brief.createdAt = getCurrentTimestamp();
+    });
+    
+    // Sort briefs by order
+    const sortedBriefs = [...currentProject.briefs].sort((a, b) => (a.order || 0) - (b.order || 0));
+    
+    try {
+        list.innerHTML = sortedBriefs.map(brief => {
+            const linkedCount = getLinkedItemsCount(brief.id);
+            
+            // Assign link color if not already assigned (for backwards compatibility)
+            if (!brief.linkColor) {
+                brief.linkColor = getNextLinkColor();
+                // Only save if we actually assigned a new color
+                setTimeout(() => saferSaveProjects(), 0);
+            }
+            
+            // Use the brief's assigned color always (not just when linked)
+            const borderColor = brief.linkColor || '#a3a3a3';
+            
+            // Handle backwards compatibility and rich text content
+            const proposition = brief.proposition || '';
+            const clientBrief = brief.clientBrief || brief.content || '';
+            const clientBriefRich = brief.clientBriefRich || '';
+            const hasProposition = proposition.trim().length > 0;
+            const hasClientBrief = clientBrief.trim().length > 0 || clientBriefRich.trim().length > 0;
+            
+            // Get preview content - prefer rich content, fallback to plain text
+            let clientBriefPreview = '';
+            if (clientBriefRich && clientBriefRich.trim()) {
+                // Convert rich content to plain text for preview
+                clientBriefPreview = truncateContent(htmlToText(clientBriefRich), 120);
+            } else if (clientBrief) {
+                clientBriefPreview = truncateContent(clientBrief, 120);
+            }
+            
+            // Safely serialize the brief data with better error handling
+            const serializedBrief = safeSerializeItem(brief);
+            
+            return `
+                <div class="item brief-item sortable-item ${linkedCount > 0 ? 'linked-item' : ''}" 
+                     draggable="true"
+                     data-item="${serializedBrief}"
+                     data-type="brief"
+                     data-id="${brief.id}"
+                     ondragstart="handleDragStart(event)"
+                     ondragend="handleDragEnd(event)"
+                     ondblclick="openItemEditor(findItem('${brief.id}', 'brief'), 'brief')"
+                     style="border-left: 3px solid ${borderColor};">
+                    <div class="grab-handle"></div>
+                    <div class="item-type type-brief">Brief</div>
+                    <div class="item-header">
+                        <div class="item-title">${brief.title}</div>
+                    </div>
+                    <div class="item-meta">
+                        Created: ${formatDate(brief.createdAt)}
+                        ${linkedCount > 0 ? ` • ${linkedCount} linked item${linkedCount > 1 ? 's' : ''}` : ''}
+                        ${clientBriefRich ? ' • Rich text' : ''}
+                    </div>
+                    
+                    ${hasProposition ? `
+                        <div style="margin: 8px 0; padding: 8px; background: #f0f9ff; border-left: 3px solid #0ea5e9; border-radius: 4px;">
+                            <div style="font-size: 11px; font-weight: 600; color: #0369a1; text-transform: uppercase; margin-bottom: 4px;">Proposition</div>
+                            <div style="color: #525252; line-height: 1.4; font-size: 13px;">
+                                ${truncateContent(proposition, 120)}
+                            </div>
+                        </div>
+                    ` : ''}
+                    
+                    ${hasClientBrief ? `
+                        <div style="margin: 8px 0; padding: 8px; background: #fefce8; border-left: 3px solid #eab308; border-radius: 4px;">
+                            <div style="font-size: 11px; font-weight: 600; color: #a16207; text-transform: uppercase; margin-bottom: 4px;">Client Brief ${clientBriefRich ? '(Rich Text)' : ''}</div>
+                            <div style="color: #525252; line-height: 1.4; font-size: 13px;">
+                                ${clientBriefPreview}
+                            </div>
+                        </div>
+                    ` : ''}
+                    
+                    <div class="item-actions">
+                        <div style="font-size: 11px; color: #a3a3a3; font-style: italic; flex: 1;">
+                            Double-click to edit • Drag to create linked items
+                        </div>
+                        <button class="delete-btn" data-delete-type="brief" data-delete-id="${brief.id}">
+                            ×
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        
+        console.log(`✓ Rendered ${sortedBriefs.length} briefs`);
+        
+    } catch (error) {
+        console.error('Error rendering briefs:', error);
+        list.innerHTML = '<div style="padding: 20px; color: #ef4444;">Error rendering briefs. Please refresh the page.</div>';
+    }
+}
+
+function renderNotes() {
+    const list = getEl('notesList');
+    if (!currentProject.notes) currentProject.notes = [];
+    
+    // Ensure notes have order values
+    currentProject.notes.forEach((note, index) => {
+        if (note.order === undefined) {
+            note.order = index;
+        }
+    });
+    
+    // Sort notes by order
+    const sortedNotes = [...currentProject.notes].sort((a, b) => (a.order || 0) - (b.order || 0));
+    
+    list.innerHTML = sortedNotes.map(note => {
+        const isLinked = note.linkedBriefId;
+        const linkedBrief = isLinked ? currentProject.briefs.find(b => b.id === note.linkedBriefId) : null;
+        const linkColor = getLinkColor(note, 'note');
+        const borderColor = linkColor || '#a3a3a3'; // Grey for unlinked
+        
+        // Safely serialize the note data
+        const serializedNote = safeSerializeItem(note);
+        
+        return `
+            <div class="item note-item sortable-item ${isLinked ? 'linked-item' : ''}" 
+                 draggable="true"
+                 data-item="${serializedNote}"
+                 data-type="note"
+                 data-id="${note.id}"
+                 ondragstart="handleDragStart(event)"
+                 ondragend="handleDragEnd(event)"
+                 ondblclick="openItemEditor(findItem('${note.id}', 'note'), 'note')"
+                 style="border-left: 3px solid ${borderColor};">
+                <div class="grab-handle"></div>
+                <div class="item-type type-note">Note</div>
+                <div class="item-header">
+                    <div class="item-title">${note.title}</div>
+                </div>
+                <div class="item-meta">
+                    Created: ${formatDate(note.createdAt)}
+                    ${isLinked && linkedBrief ? ` • Linked to "${linkedBrief.title}"` : ''}
+                </div>
+                ${note.content ? `
+                    <div style="margin: 8px 0; color: #525252; line-height: 1.4;">
+                        ${truncateContent(note.content)}
+                    </div>
+                ` : ''}
+                <div class="item-actions">
+                    <div style="font-size: 11px; color: #a3a3a3; font-style: italic; flex: 1;">
+                        Double-click to edit • Drag to create task
+                    </div>
+                    <button class="delete-btn" data-delete-type="note" data-delete-id="${note.id}">
+                        ×
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderCopy() {
+    const list = getEl('copyList');
+    if (!currentProject.copy) currentProject.copy = [];
+    
+    // Ensure copy items have order values
+    currentProject.copy.forEach((copy, index) => {
+        if (copy.order === undefined) {
+            copy.order = index;
+        }
+    });
+    
+    // Sort copy items by order
+    const sortedCopy = [...currentProject.copy].sort((a, b) => (a.order || 0) - (b.order || 0));
+    
+    list.innerHTML = sortedCopy.map(copy => {
+        const isLinked = copy.linkedBriefId;
+        const linkedBrief = isLinked ? currentProject.briefs.find(b => b.id === copy.linkedBriefId) : null;
+        const linkColor = getLinkColor(copy, 'copy');
+        const borderColor = linkColor || '#a3a3a3'; // Grey for unlinked
+        
+        // Safely serialize the copy data
+        const serializedCopy = safeSerializeItem(copy);
+        
+        return `
+            <div class="item copy-item sortable-item ${isLinked ? 'linked-item' : ''}" 
+                 draggable="true"
+                 data-item="${serializedCopy}"
+                 data-type="copy"
+                 data-id="${copy.id}"
+                 ondragstart="handleDragStart(event)"
+                 ondragend="handleDragEnd(event)"
+                 ondblclick="openItemEditor(findItem('${copy.id}', 'copy'), 'copy')"
+                 style="border-left: 3px solid ${borderColor};">
+                <div class="grab-handle"></div>
+                <div class="item-type type-copy">Copy</div>
+                <div class="item-header">
+                    <div class="item-title">${copy.title}</div>
+                </div>
+                <div class="item-meta">
+                    Created: ${formatDate(copy.createdAt)}
+                    ${isLinked && linkedBrief ? ` • Linked to "${linkedBrief.title}"` : ''}
+                </div>
+                ${copy.content ? `
+                    <div style="margin: 8px 0; color: #525252; line-height: 1.4;">
+                        ${truncateContent(copy.content)}
+                    </div>
+                ` : ''}
+                <div class="item-actions">
+                    <div style="font-size: 11px; color: #a3a3a3; font-style: italic; flex: 1;">
+                        Double-click to edit • Drag to create task
+                    </div>
+                    <button class="delete-btn" data-delete-type="copy" data-delete-id="${copy.id}">
+                        ×
+                    </button>
+                </div>
+            </div>
+        `;// ===== HELPER FUNCTIONS (DEFINED EARLY) =====
 // DOM Helpers
 const getEl = (id) => document.getElementById(id);
 const setDisplay = (id, display) => { const el = getEl(id); if (el) el.style.display = display; };
@@ -7,15 +2405,37 @@ const getValue = (id) => { const el = getEl(id); return el ? el.value.trim() : '
 const setContent = (id, content) => { const el = getEl(id); if (el) el.textContent = content; };
 const setHTML = (id, html) => { const el = getEl(id); if (el) el.innerHTML = html; };
 
-// Storage Helpers - UPDATED TO USE LOCALSTORAGE
+// Storage Helpers - UPDATED TO USE LOCALSTORAGE WITH BETTER ERROR HANDLING
 const saveToStorage = (key, data) => {
     try {
+        // Create a backup before saving
+        const existing = localStorage.getItem(key);
+        if (existing && key === 'projects') {
+            localStorage.setItem('projects_backup', existing);
+        }
+        
         localStorage.setItem(key, JSON.stringify(data));
+        return true;
     } catch (error) {
         console.error(`Error saving ${key}:`, error);
+        
+        // Try to restore backup if this is a projects save
+        if (key === 'projects') {
+            const backup = localStorage.getItem('projects_backup');
+            if (backup) {
+                try {
+                    localStorage.setItem('projects', backup);
+                    console.log('Restored from backup after save error');
+                } catch (restoreError) {
+                    console.error('Failed to restore backup:', restoreError);
+                }
+            }
+        }
+        
         // Fallback to in-memory storage if localStorage fails
         if (!window.appStorage) window.appStorage = {};
         window.appStorage[key] = JSON.stringify(data);
+        return false;
     }
 };
 
@@ -23,7 +2443,17 @@ const loadFromStorage = (key, defaultValue = null) => {
     try {
         const saved = localStorage.getItem(key);
         if (saved) {
-            return JSON.parse(saved);
+            const parsed = JSON.parse(saved);
+            // Validate the parsed data
+            if (key === 'projects' && !Array.isArray(parsed)) {
+                console.warn('Invalid projects data format, using backup or default');
+                const backup = localStorage.getItem('projects_backup');
+                if (backup) {
+                    return JSON.parse(backup);
+                }
+                return defaultValue;
+            }
+            return parsed;
         }
         // Check fallback storage if localStorage is empty
         if (window.appStorage && window.appStorage[key]) {
@@ -32,6 +2462,20 @@ const loadFromStorage = (key, defaultValue = null) => {
         return defaultValue;
     } catch (error) {
         console.error(`Error loading ${key}:`, error);
+        
+        // Try backup for projects
+        if (key === 'projects') {
+            try {
+                const backup = localStorage.getItem('projects_backup');
+                if (backup) {
+                    console.log('Using backup due to main data corruption');
+                    return JSON.parse(backup);
+                }
+            } catch (backupError) {
+                console.error('Backup also corrupted:', backupError);
+            }
+        }
+        
         return defaultValue;
     }
 };
@@ -47,17 +2491,22 @@ const truncateContent = (content, maxLength = 100) => {
     return content.length > maxLength ? content.substring(0, maxLength) + '...' : content;
 };
 
-// NEW: JSON Sanitization Helper
+// IMPROVED: JSON Sanitization Helper with better error handling
 const sanitizeForJson = (htmlString) => {
     if (!htmlString) return htmlString;
-    return htmlString
-        .replace(/\\/g, '\\\\')    // Escape backslashes first
-        .replace(/"/g, '\\"')      // Escape double quotes  
-        .replace(/'/g, "\\'")      // Escape single quotes
-        .replace(/\n/g, '\\n')     // Escape newlines
-        .replace(/\r/g, '\\r')     // Escape carriage returns
-        .replace(/\t/g, '\\t')     // Escape tabs
-        .replace(/\u0000-\u001F/g, ''); // Remove control characters
+    try {
+        return htmlString
+            .replace(/\\/g, '\\\\')    // Escape backslashes first
+            .replace(/"/g, '\\"')      // Escape double quotes  
+            .replace(/'/g, "\\'")      // Escape single quotes
+            .replace(/\n/g, '\\n')     // Escape newlines
+            .replace(/\r/g, '\\r')     // Escape carriage returns
+            .replace(/\t/g, '\\t')     // Escape tabs
+            .replace(/[\u0000-\u001F]/g, ''); // Remove control characters
+    } catch (error) {
+        console.error('Error sanitizing HTML for JSON:', error);
+        return '[Content sanitization failed]';
+    }
 };
 
 // Notification Helper (consolidates repeated notification code)
@@ -77,6 +2526,184 @@ const showNotification = (message) => {
         }, 300);
     }, 3000);
 };
+
+// ===== DATA RECOVERY FUNCTIONS =====
+
+function debugLocalStorage() {
+    console.log('🔍 Debugging localStorage data:');
+    
+    // Check what's actually in localStorage
+    const keys = Object.keys(localStorage);
+    console.log('localStorage keys:', keys);
+    
+    // Check projects data
+    const projectsRaw = localStorage.getItem('projects');
+    if (projectsRaw) {
+        try {
+            const projectsData = JSON.parse(projectsRaw);
+            console.log('Projects in storage:', projectsData.length);
+            projectsData.forEach((project, index) => {
+                console.log(`Project ${index}:`, {
+                    id: project.id,
+                    name: project.name,
+                    archived: project.archived,
+                    briefs: project.briefs?.length || 0,
+                    notes: project.notes?.length || 0,
+                    copy: project.copy?.length || 0,
+                    tasks: project.tasks?.length || 0
+                });
+            });
+        } catch (error) {
+            console.error('Error parsing projects data:', error);
+            console.log('Raw projects data:', projectsRaw.substring(0, 500) + '...');
+        }
+    } else {
+        console.log('No projects data in localStorage');
+    }
+    
+    // Check breadcrumbs
+    const breadcrumbs = localStorage.getItem('breadcrumbs');
+    if (breadcrumbs) {
+        try {
+            const breadcrumbData = JSON.parse(breadcrumbs);
+            console.log('Breadcrumbs:', breadcrumbData);
+        } catch (error) {
+            console.error('Error parsing breadcrumbs:', error);
+        }
+    }
+    
+    // Check work context
+    const workContext = localStorage.getItem('workContext');
+    if (workContext) {
+        try {
+            const contextData = JSON.parse(workContext);
+            console.log('Work context:', contextData);
+        } catch (error) {
+            console.error('Error parsing work context:', error);
+        }
+    }
+}
+
+function recoverMissingProject() {
+    console.log('🔧 Attempting to recover missing project...');
+    
+    // Check breadcrumbs for clues about the missing project
+    const breadcrumbData = loadFromStorage('breadcrumbs', []);
+    const contextData = loadFromStorage('workContext');
+    
+    // Find unique project IDs from breadcrumbs
+    const projectIdsFromBreadcrumbs = [...new Set(breadcrumbData.map(b => b.projectId))];
+    
+    // Find project IDs that exist in breadcrumbs but not in current projects
+    const currentProjectIds = projects.map(p => p.id);
+    const missingProjectIds = projectIdsFromBreadcrumbs.filter(id => !currentProjectIds.includes(id));
+    
+    console.log('Current project IDs:', currentProjectIds);
+    console.log('Project IDs in breadcrumbs:', projectIdsFromBreadcrumbs);
+    console.log('Missing project IDs:', missingProjectIds);
+    
+    if (missingProjectIds.length > 0) {
+        // Try to reconstruct the project from breadcrumb data
+        missingProjectIds.forEach(missingId => {
+            const itemsFromProject = breadcrumbData.filter(b => b.projectId == missingId);
+            
+            if (itemsFromProject.length > 0) {
+                console.log(`Found ${itemsFromProject.length} items for missing project ${missingId}`);
+                
+                // Try to determine project name from context
+                let projectName = 'Recovered Project';
+                if (contextData && contextData.projectContexts) {
+                    const projectContexts = new Map(contextData.projectContexts);
+                    const projectContext = projectContexts.get(`project-${missingId}`);
+                    if (projectContext && projectContext.title) {
+                        // Extract potential project name from item title
+                        projectName = `Recovered: ${projectContext.title}`;
+                    }
+                }
+                
+                // Check if this might be "Global prime"
+                const hasGlobalPrimeItems = itemsFromProject.some(item => 
+                    item.title && (
+                        item.title.toLowerCase().includes('global') ||
+                        item.title.toLowerCase().includes('prime')
+                    )
+                );
+                
+                if (hasGlobalPrimeItems || missingProjectIds.length === 1) {
+                    projectName = 'Global prime (Recovered)';
+                }
+                
+                // Create recovery project with minimal structure
+                const recoveryProject = {
+                    id: parseInt(missingId),
+                    name: projectName,
+                    description: 'This project was recovered from breadcrumb data after a system error.',
+                    briefs: [],
+                    notes: [],
+                    copy: [],
+                    tasks: [],
+                    createdAt: getCurrentTimestamp(),
+                    colorTheme: getNextColorTheme(),
+                    archived: false,
+                    recovered: true
+                };
+                
+                // Add placeholder items based on breadcrumb data
+                itemsFromProject.forEach(breadcrumb => {
+                    const placeholderItem = {
+                        id: parseInt(breadcrumb.itemId),
+                        title: breadcrumb.title,
+                        content: '[Content lost - please re-enter]',
+                        createdAt: getCurrentTimestamp(),
+                        recovered: true,
+                        order: 0
+                    };
+                    
+                    switch(breadcrumb.itemType) {
+                        case 'brief':
+                            placeholderItem.proposition = '[Please re-enter proposition]';
+                            placeholderItem.clientBrief = '[Please re-enter client brief]';
+                            placeholderItem.clientBriefRich = '<p>[Please re-enter client brief]</p>';
+                            placeholderItem.linkColor = getNextLinkColor();
+                            delete placeholderItem.content;
+                            recoveryProject.briefs.push(placeholderItem);
+                            break;
+                        case 'note':
+                            placeholderItem.richContent = '<p>[Content lost - please re-enter]</p>';
+                            recoveryProject.notes.push(placeholderItem);
+                            break;
+                        case 'copy':
+                            placeholderItem.richContent = '<p>[Content lost - please re-enter]</p>';
+                            recoveryProject.copy.push(placeholderItem);
+                            break;
+                        case 'task':
+                            placeholderItem.completed = false;
+                            recoveryProject.tasks.push(placeholderItem);
+                            break;
+                    }
+                });
+                
+                console.log('Created recovery project:', recoveryProject);
+                
+                // Add to projects array
+                projects.push(recoveryProject);
+                
+                // Save the recovered project
+                saferSaveProjects();
+                
+                // Update UI
+                updateProjectSelector();
+                renderProjectOverview();
+                
+                showNotification(`Recovered project "${projectName}" with ${itemsFromProject.length} items. Content may need to be re-entered.`);
+                
+                return true;
+            }
+        });
+    }
+    
+    return false;
+}
 
 // ===== MAIN APPLICATION CODE =====
 
@@ -483,7 +3110,7 @@ function toggleGlobalTask(projectId, taskId) {
             } else {
                 delete task.completedAt;
             }
-            saveProjects();
+            saferSaveProjects();
             
             // Force immediate re-render of global tasks
             setTimeout(() => {
@@ -754,7 +3381,7 @@ function cleanupOldCompletedTasks() {
     });
     
     if (hasChanges) {
-        saveProjects();
+        saferSaveProjects();
         // Clean up global task order references for deleted tasks
         cleanupGlobalTaskOrder();
         console.log('Cleaned up old completed tasks');
@@ -1197,7 +3824,7 @@ function deleteBrief(briefId) {
             // Remove from breadcrumbs
             removeFromBreadcrumbs('brief', parsedId);
             
-            saveProjects();
+            saferSaveProjects();
             renderBriefs();
             renderNotes();
             renderCopy();
@@ -1240,7 +3867,7 @@ function deleteNote(noteId) {
             // Remove from breadcrumbs
             removeFromBreadcrumbs('note', parsedId);
             
-            saveProjects();
+            saferSaveProjects();
             renderNotes();
             renderProjectTasks();
             renderGlobalTasks();
@@ -1274,7 +3901,7 @@ function deleteCopy(copyId) {
             // Remove from breadcrumbs
             removeFromBreadcrumbs('copy', parsedId);
             
-            saveProjects();
+            saferSaveProjects();
             renderCopy();
             renderProjectTasks();
             renderGlobalTasks();
@@ -1314,7 +3941,7 @@ function removeFromBreadcrumbs(itemType, itemId) {
     console.log('Removed item from breadcrumbs:', breadcrumbId);
 }
 
-// ===== DRAG AND DROP FUNCTIONS - FIXED =====
+// ===== IMPROVED DRAG AND DROP FUNCTIONS =====
 
 function handleDragStart(event) {
     try {
@@ -1328,19 +3955,29 @@ function handleDragStart(event) {
             return false;
         }
         
-        // Safely parse the item data
+        // Safely parse the item data with better error handling
         let itemData;
         try {
-            itemData = JSON.parse(itemDataString);
+            // Decode HTML entities first
+            const decodedData = itemDataString
+                .replace(/&quot;/g, '"')
+                .replace(/&#39;/g, "'")
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&amp;/g, '&');
+            
+            itemData = JSON.parse(decodedData);
         } catch (parseError) {
             console.error('Failed to parse item data:', parseError);
-            console.error('Problematic data string:', itemDataString);
+            console.error('Problematic data string:', itemDataString.substring(0, 200) + '...');
             
             // Try to extract basic info from the element for fallback
             const fallbackData = {
-                id: itemElement.getAttribute('data-id') || generateId(),
+                id: parseInt(itemElement.getAttribute('data-id')) || generateId(),
                 title: itemElement.querySelector('.item-title')?.textContent || 'Untitled',
-                type: itemType
+                type: itemType,
+                content: '',
+                createdAt: getCurrentTimestamp()
             };
             
             console.log('Using fallback data:', fallbackData);
@@ -1455,10 +4092,86 @@ function handleDrop(event, targetType) {
     draggedItemType = null;
 }
 
-// ===== PROJECT COLUMN DROP ZONES SETUP =====
+// ===== ROBUST DROP ZONE SETUP =====
 
 // Track which elements have listeners to prevent duplicates
 let elementsWithListeners = new Set();
+
+function robustDropZoneSetup() {
+    console.log('🔧 Setting up robust drop zones...');
+    
+    // Clean up first
+    cleanupProjectDropZones();
+    
+    // Wait for DOM to be ready and try multiple times
+    let attempts = 0;
+    const maxAttempts = 5;
+    
+    const setupAttempt = () => {
+        attempts++;
+        console.log(`Drop zone setup attempt ${attempts}/${maxAttempts}`);
+        
+        // Check if we're in project view
+        const dashboard = getEl('dashboard');
+        if (!dashboard || dashboard.style.display === 'none') {
+            console.log('Not in project view, skipping drop zone setup');
+            return;
+        }
+        
+        // Ensure all column elements exist by finding them and assigning IDs if needed
+        const requiredColumns = [
+            { id: 'briefsColumn', selector: '.panel[style*="briefs"]', type: 'brief' },
+            { id: 'notesColumn', selector: '.panel[style*="notes"]', type: 'note' },
+            { id: 'copyColumn', selector: '.panel[style*="copy"]', type: 'copy' },
+            { id: 'tasksColumn', selector: '.panel[style*="tasks"]', type: 'task' }
+        ];
+        
+        let allColumnsFound = true;
+        
+        requiredColumns.forEach(({ id, selector, type }) => {
+            let element = getEl(id);
+            
+            // If element doesn't exist by ID, try to find it by selector and assign ID
+            if (!element) {
+                element = document.querySelector(selector);
+                if (element) {
+                    element.id = id;
+                    console.log(`Assigned ID ${id} to element found by selector`);
+                } else {
+                    console.warn(`Could not find element for ${id}`);
+                    allColumnsFound = false;
+                }
+            }
+        });
+        
+        if (!allColumnsFound && attempts < maxAttempts) {
+            console.log('Not all columns found, retrying...');
+            setTimeout(setupAttempt, 200);
+            return;
+        }
+        
+        // Proceed with setup
+        setupProjectDropZones();
+        
+        // Validate
+        setTimeout(() => {
+            const workingColumns = requiredColumns.filter(({ id }) => {
+                const element = getEl(id);
+                return element && element.hasAttribute('data-drop-type') && element._dropHandlers;
+            });
+            
+            console.log(`✅ Drop zones setup complete: ${workingColumns.length}/${requiredColumns.length} working`);
+            
+            if (workingColumns.length < requiredColumns.length && attempts < maxAttempts) {
+                console.log('Some drop zones still not working, retrying...');
+                setTimeout(setupAttempt, 300);
+            }
+        }, 100);
+    };
+    
+    // Start setup
+    setTimeout(setupAttempt, 100);
+}
 
 function setupProjectDropZones() {
     console.log('Setting up project drop zones...');
@@ -1655,7 +4368,7 @@ function reorderItemInColumn(item, itemType, event) {
     });
     
     // Save and re-render
-    saveProjects();
+    saferSaveProjects();
     
     // Re-render the appropriate column
     switch(itemType) {
@@ -1729,7 +4442,7 @@ function calculateDropPosition(dropTarget, event, itemType) {
     const rect = closestElement.getBoundingClientRect();
     const elementCenter = rect.top + rect.height / 2;
     
-    if (mouseY < elementCenter) {
+    if (event.clientY < elementCenter) {
         // Insert before the closest item
         return closestIndex;
     } else {
@@ -1845,7 +4558,7 @@ function moveItemBetweenColumns(item, fromType, toType) {
         renderCopy();
     }
     
-    saveProjects();
+    saferSaveProjects();
 }
 
 function createItemFromDrop(sourceItem, sourceType, targetType) {
@@ -2001,7 +4714,7 @@ function createItemFromDrop(sourceItem, sourceType, targetType) {
         }
     }
     
-    saveProjects();
+    saferSaveProjects();
 }
 
 // ===== CONTEXT PRESERVATION SYSTEM =====
@@ -2800,6 +5513,10 @@ function clearPomodoroState() {
 
 function openProjectModal() {
     setDisplay('projectModal', 'block');
+    // Setup project import zone when opening modal
+    setTimeout(() => {
+        setupProjectImportZone();
+    }, 100);
 }
 
 function showHelp() {
@@ -2813,6 +5530,11 @@ function closeModal(modalId) {
     if (modalId === 'confirmModal') {
         confirmCallback = null;
         confirmData = null;
+    }
+    
+    // If closing project modal, clear import data
+    if (modalId === 'projectModal') {
+        clearProjectImportZone();
     }
 }
 
@@ -2873,7 +5595,7 @@ function toggleArchiveProject(projectId) {
         const project = projects.find(p => p && p.id === projectId);
         if (project) {
             project.archived = !project.archived;
-            saveProjects();
+            saferSaveProjects();
             updateProjectSelector();
             renderProjectOverview();
         }
@@ -3328,7 +6050,7 @@ function createProject() {
         }
         
         projects.push(project);
-        saveProjects();
+        saferSaveProjects();
         updateProjectSelector();
         closeModal('projectModal');
         
@@ -3440,2433 +6162,4 @@ function setupProjectImportZone() {
     }
 }
 
-async function processProjectImportDocument(file) {
-    try {
-        showNotification('Analyzing document for project import...');
-        
-        if (!mammothLibrary) {
-            throw new Error('Document processing library not available');
-        }
-        
-        // Read file as array buffer
-        const arrayBuffer = await file.arrayBuffer();
-        
-        // Extract HTML content
-        const result = await mammothLibrary.convertToHtml({arrayBuffer: arrayBuffer});
-        
-        if (result.value && result.value.trim()) {
-            // Parse the document and extract structured content
-            const projectData = parseDocumentForProject(result.value, file.name);
-            
-            // Populate the form with extracted data
-            populateProjectForm(projectData);
-            
-            showNotification(`Document processed! Found ${projectData.briefs.length} potential briefs, ${projectData.notes.length} notes, and ${projectData.copy.length} copy items.`);
-        } else {
-            showNotification('No content found in document');
-        }
-        
-    } catch (error) {
-        console.error('Error processing import document:', error);
-        showNotification('Error processing document. Please try again or create project manually.');
-    }
-}
-
-function parseDocumentForProject(html, fileName) {
-    // Create a temporary div to parse the HTML
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = html;
-    
-    // Extract project name from filename or first heading
-    let projectName = fileName.replace(/\.(docx?|doc)$/i, '').replace(/[_-]/g, ' ');
-    const firstHeading = tempDiv.querySelector('h1, h2, h3');
-    if (firstHeading && firstHeading.textContent.trim()) {
-        projectName = firstHeading.textContent.trim();
-        firstHeading.remove(); // Remove so it's not processed again
-    }
-    
-    // Initialize collections
-    const projectData = {
-        name: projectName,
-        description: 'Imported from Word document',
-        briefs: [],
-        notes: [],
-        copy: []
-    };
-    
-    // Get all content sections
-    const sections = extractDocumentSections(tempDiv);
-    
-    // Analyze and categorize sections
-    sections.forEach(section => {
-        const category = categorizeSection(section);
-        const item = {
-            id: generateId(),
-            title: section.title || 'Untitled',
-            content: section.content || '',
-            createdAt: getCurrentTimestamp(),
-            order: 0
-        };
-        
-        switch(category) {
-            case 'brief':
-                // Try to split content into proposition and client brief
-                const briefParts = splitBriefContent(section.content);
-                item.proposition = briefParts.proposition;
-                item.clientBrief = briefParts.clientBrief;
-                item.clientBriefRich = briefParts.clientBriefRich;
-                item.linkColor = getNextLinkColor();
-                item.type = 'brief';
-                delete item.content; // Briefs don't use generic content
-                projectData.briefs.push(item);
-                break;
-                
-            case 'note':
-                item.richContent = section.richContent || textToHtml(section.content);
-                item.type = 'note';
-                projectData.notes.push(item);
-                break;
-                
-            case 'copy':
-                item.richContent = section.richContent || textToHtml(section.content);
-                item.type = 'copy';
-                projectData.copy.push(item);
-                break;
-        }
-    });
-    
-    return projectData;
-}
-
-function extractDocumentSections(container) {
-    const sections = [];
-    const headings = container.querySelectorAll('h1, h2, h3, h4, h5, h6');
-    
-    if (headings.length === 0) {
-        // No headings found, treat as single section
-        const content = container.innerHTML.trim();
-        const textContent = container.textContent.trim();
-        if (textContent) {
-            sections.push({
-                title: 'Imported Content',
-                content: htmlToText(content),
-                richContent: content
-            });
-        }
-        return sections;
-    }
-    
-    headings.forEach((heading, index) => {
-        const title = heading.textContent.trim();
-        let content = '';
-        let richContent = '';
-        
-        // Get content between this heading and the next
-        let currentElement = heading.nextElementSibling;
-        const nextHeading = headings[index + 1];
-        
-        while (currentElement && currentElement !== nextHeading) {
-            richContent += currentElement.outerHTML;
-            content += currentElement.textContent + '\n';
-            currentElement = currentElement.nextElementSibling;
-        }
-        
-        if (title && (content.trim() || richContent.trim())) {
-            sections.push({
-                title: title,
-                content: content.trim(),
-                richContent: richContent.trim()
-            });
-        }
-    });
-    
-    return sections;
-}
-
-function categorizeSection(section) {
-    const title = section.title.toLowerCase();
-    const content = section.content.toLowerCase();
-    
-    // Keywords that suggest different content types
-    const briefKeywords = ['brief', 'proposal', 'proposition', 'project brief', 'creative brief', 'brand brief'];
-    const noteKeywords = ['notes', 'research', 'insights', 'analysis', 'thinking', 'ideas', 'brainstorm'];
-    const copyKeywords = ['copy', 'content', 'text', 'headline', 'tagline', 'script', 'writing'];
-    
-    // Check title first
-    if (briefKeywords.some(keyword => title.includes(keyword))) {
-        return 'brief';
-    }
-    if (noteKeywords.some(keyword => title.includes(keyword))) {
-        return 'note';
-    }
-    if (copyKeywords.some(keyword => title.includes(keyword))) {
-        return 'copy';
-    }
-    
-    // Check content for clues
-    if (content.includes('proposition') || content.includes('objective') || content.includes('target audience')) {
-        return 'brief';
-    }
-    if (content.includes('insight') || content.includes('research') || content.includes('analysis')) {
-        return 'note';
-    }
-    
-    // Default categorization based on content length and structure
-    if (section.content.length < 500) {
-        return 'copy'; // Shorter content likely to be copy
-    } else {
-        return 'note'; // Longer content likely to be notes
-    }
-}
-
-function splitBriefContent(content) {
-    const lines = content.split('\n').filter(line => line.trim());
-    let proposition = '';
-    let clientBrief = '';
-    
-    // Look for proposition markers
-    const propMarkers = ['proposition:', 'prop:', 'objective:', 'goal:'];
-    let propIndex = -1;
-    
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].toLowerCase();
-        if (propMarkers.some(marker => line.includes(marker))) {
-            propIndex = i;
-            break;
-        }
-    }
-    
-    if (propIndex >= 0) {
-        // Found proposition marker
-        const propLine = lines[propIndex];
-        const colonIndex = propLine.indexOf(':');
-        if (colonIndex >= 0) {
-            proposition = propLine.substring(colonIndex + 1).trim();
-        }
-        
-        // Everything else is client brief
-        const otherLines = [...lines.slice(0, propIndex), ...lines.slice(propIndex + 1)];
-        clientBrief = otherLines.join('\n');
-    } else {
-        // No clear proposition found, put everything in client brief
-        clientBrief = content;
-    }
-    
-    return {
-        proposition: proposition,
-        clientBrief: clientBrief,
-        clientBriefRich: textToHtml(clientBrief)
-    };
-}
-
-function populateProjectForm(projectData) {
-    // Set project name and description
-    setValue('newProjectName', projectData.name);
-    setValue('newProjectDescription', projectData.description);
-    
-    // Store the parsed data for when the project is created
-    window.pendingProjectImport = projectData;
-    
-    // Update the import zone to show success
-    const importZone = document.querySelector('.project-import-zone');
-    if (importZone) {
-        importZone.style.borderColor = '#16a34a';
-        importZone.style.background = '#f0fdf4';
-        importZone.innerHTML = `
-            <div style="color: #16a34a; font-size: 16px; margin-bottom: 8px;">✅ Document Imported Successfully!</div>
-            <div style="font-size: 13px; opacity: 0.8;">
-                Found: ${projectData.briefs.length} briefs, ${projectData.notes.length} notes, ${projectData.copy.length} copy items
-            </div>
-            <div style="font-size: 12px; opacity: 0.6; margin-top: 8px;">
-                Click "Create Project" to proceed with the imported content
-            </div>
-        `;
-    }
-}
-
-// Quick add functions for input fields
-function addQuickBrief() {
-    if (!currentProject) {
-        alert('Please select a project first');
-        return;
-    }
-    
-    const title = getValue('briefTitle');
-    if (title) {
-        const linkColor = getNextLinkColor();
-        console.log('Assigning color to new brief:', linkColor, 'Index:', nextLinkColorIndex);
-        
-        const brief = {
-            id: generateId(),
-            title,
-            proposition: '',
-            clientBrief: '',
-            type: 'brief',
-            linkColor: linkColor,
-            order: 0,
-            createdAt: getCurrentTimestamp()
-        };
-        
-        // Update order of existing briefs
-        currentProject.briefs.forEach(existingBrief => {
-            if (existingBrief.order !== undefined) {
-                existingBrief.order += 1;
-            }
-        });
-        
-        currentProject.briefs.unshift(brief);
-        saveProjects();
-        renderBriefs();
-        
-        // Clear input
-        setValue('briefTitle', '');
-        
-        console.log('Created brief with color:', brief.linkColor);
-    }
-}
-
-function addQuickNote() {
-    if (!currentProject) {
-        alert('Please select a project first');
-        return;
-    }
-    
-    const title = getValue('noteTitle');
-    if (title) {
-        const note = {
-            id: generateId(),
-            title,
-            content: '',
-            type: 'note',
-            order: 0,
-            createdAt: getCurrentTimestamp()
-        };
-        
-        // Update order of existing notes
-        currentProject.notes.forEach(existingNote => {
-            if (existingNote.order !== undefined) {
-                existingNote.order += 1;
-            }
-        });
-        
-        currentProject.notes.unshift(note);
-        saveProjects();
-        renderNotes();
-        
-        // Clear input
-        setValue('noteTitle', '');
-    }
-}
-
-function addQuickCopy() {
-    if (!currentProject) {
-        alert('Please select a project first');
-        return;
-    }
-    
-    const title = getValue('copyTitle');
-    if (title) {
-        const copy = {
-            id: generateId(),
-            title,
-            content: '',
-            type: 'copy',
-            order: 0,
-            createdAt: getCurrentTimestamp()
-        };
-        
-        // Update order of existing copy
-        currentProject.copy.forEach(existingCopy => {
-            if (existingCopy.order !== undefined) {
-                existingCopy.order += 1;
-            }
-        });
-        
-        currentProject.copy.unshift(copy);
-        saveProjects();
-        renderCopy();
-        
-        // Clear input
-        setValue('copyTitle', '');
-    }
-}
-
-function addQuickTask() {
-    if (!currentProject) {
-        alert('Please select a project first');
-        return;
-    }
-    
-    const title = getValue('taskTitle');
-    if (title) {
-        const task = {
-            id: generateId(),
-            title,
-            content: '',
-            type: 'task',
-            completed: false,
-            order: 0,
-            createdAt: getCurrentTimestamp()
-        };
-        
-        // Update order of existing tasks
-        currentProject.tasks.forEach(existingTask => {
-            if (existingTask.order !== undefined) {
-                existingTask.order += 1;
-            }
-        });
-        
-        currentProject.tasks.unshift(task);
-        saveProjects();
-        renderProjectTasks();
-        
-        // Clear input
-        setValue('taskTitle', '');
-    }
-}
-
-// Handle Enter key press in input fields
-function handleEnterKey(event, type) {
-    if (event.key === 'Enter') {
-        switch(type) {
-            case 'brief':
-                addQuickBrief();
-                break;
-            case 'note':
-                addQuickNote();
-                break;
-            case 'copy':
-                addQuickCopy();
-                break;
-            case 'task':
-                addQuickTask();
-                break;
-        }
-    }
-}
-
-// Render functions
-function renderProject() {
-    if (!currentProject) return;
-    
-    console.log('Rendering project:', currentProject.name);
-    
-    // Clean up existing drop zones first
-    cleanupProjectDropZones();
-    
-    renderBriefs();
-    renderNotes();
-    renderCopy();
-    renderProjectTasks();
-    
-    // Set up drop zones after all rendering is complete
-    setTimeout(() => {
-        setupProjectDropZones();
-        
-        // Verify drop zones are working
-        setTimeout(() => {
-            validateDropZones();
-        }, 100);
-    }, 200); // Increased delay to ensure DOM is fully updated
-}
-
-function validateDropZones() {
-    const columns = ['briefsColumn', 'notesColumn', 'copyColumn', 'tasksColumn'];
-    let allValid = true;
-    
-    columns.forEach(columnId => {
-        const element = getEl(columnId);
-        if (element) {
-            const hasDropType = element.hasAttribute('data-drop-type');
-            const hasHandlers = element._dropHandlers ? true : false;
-            
-            if (!hasDropType || !hasHandlers) {
-                console.warn(`❌ Drop zone validation failed for ${columnId}:`, {
-                    hasDropType,
-                    hasHandlers
-                });
-                allValid = false;
-            }
-        } else {
-            console.warn(`❌ Column element not found: ${columnId}`);
-            allValid = false;
-        }
-    });
-    
-    if (allValid) {
-        console.log('✅ All drop zones validated successfully');
-    } else {
-        console.warn('⚠ Some drop zones failed validation, attempting to fix...');
-        // Try to fix by re-setting up drop zones
-        setTimeout(() => {
-            cleanupProjectDropZones();
-            setupProjectDropZones();
-        }, 100);
-    }
-}
-
-// FIXED: Helper function to safely serialize item data
-function safeSerializeItem(item) {
-    try {
-        // Create a clean copy without potentially problematic content
-        const cleanItem = {
-            id: item.id,
-            title: item.title || '',
-            type: item.type || '',
-            content: item.content || '',
-            proposition: item.proposition || '',
-            clientBrief: item.clientBrief || '',
-            linkedBriefId: item.linkedBriefId || null,
-            linkColor: item.linkColor || null,
-            sourceItemId: item.sourceItemId || null,
-            sourceItemType: item.sourceItemType || null,
-            completed: item.completed || false,
-            order: item.order || 0,
-            createdAt: item.createdAt || getCurrentTimestamp()
-        };
-        
-        // Handle rich content specially - sanitize HTML for JSON
-        if (item.richContent) {
-            cleanItem.richContent = sanitizeForJson(item.richContent);
-        }
-        if (item.clientBriefRich) {
-            cleanItem.clientBriefRich = sanitizeForJson(item.clientBriefRich);
-        }
-        
-        // Test serialization to catch issues early
-        const serialized = JSON.stringify(cleanItem);
-        
-        // Double-escape for HTML attribute safety
-        return serialized
-            .replace(/&/g, '&amp;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
-        
-    } catch (error) {
-        console.error('Failed to serialize item:', error, item);
-        // Return minimal safe data as fallback
-        const fallbackData = {
-            id: item.id || generateId(),
-            title: item.title || 'Untitled',
-            type: item.type || 'unknown',
-            content: '',
-            createdAt: item.createdAt || getCurrentTimestamp()
-        };
-        
-        const fallbackSerialized = JSON.stringify(fallbackData);
-        return fallbackSerialized
-            .replace(/&/g, '&amp;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
-    }
-}
-
-function renderProjectOverview() {
-    const grid = getEl('projectGrid');
-    if (!grid) return;
-    
-    // Ensure projects is an array
-    if (!Array.isArray(projects)) {
-        projects = [];
-    }
-    
-    // Filter projects based on archive status
-    const visibleProjects = projects.filter(project => 
-        showArchived ? true : !project.archived
-    );
-    
-    if (visibleProjects.length === 0) {
-        grid.innerHTML = `
-            <div style="grid-column: 1 / -1; text-align: center; padding: 60px 20px; color: #a3a3a3;">
-                <div style="font-size: 14px; margin-bottom: 8px;">No projects</div>
-                <div style="font-size: 12px; color: #d4d4d4;">Create your first project to get started</div>
-            </div>
-        `;
-    } else {
-        grid.innerHTML = visibleProjects.map(project => {
-            // Safety checks for project properties
-            const totalTasks = (project.tasks && Array.isArray(project.tasks)) ? project.tasks.length : 0;
-            const completedTasks = (project.tasks && Array.isArray(project.tasks)) ? project.tasks.filter(t => t && t.completed).length : 0;
-            const colorTheme = project.colorTheme || 'blue';
-            const briefsCount = (project.briefs && Array.isArray(project.briefs)) ? project.briefs.length : 0;
-            const notesCount = (project.notes && Array.isArray(project.notes)) ? project.notes.length : 0;
-            const copyCount = (project.copy && Array.isArray(project.copy)) ? project.copy.length : 0;
-            
-            return `
-                <div class="project-card project-theme-${colorTheme} project-themed ${project.archived ? 'archived-project' : ''}" 
-                     onclick="selectProject(${project.id})">
-                    <div class="project-title">${project.name || 'Untitled Project'}</div>
-                    <div style="color: #737373; font-size: 14px; margin-bottom: 16px;">
-                        ${project.description || 'No description'}
-                    </div>
-                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0;">
-                        <div style="text-align: center; padding: 8px; background: var(--secondary); border-radius: 4px;">
-                            <div style="font-size: 1.5rem; font-weight: 600; color: var(--accent);">${briefsCount}</div>
-                            <div style="font-size: 12px; color: #737373;">Briefs</div>
-                        </div>
-                        <div style="text-align: center; padding: 8px; background: var(--secondary); border-radius: 4px;">
-                            <div style="font-size: 1.5rem; font-weight: 600; color: var(--accent);">${notesCount}</div>
-                            <div style="font-size: 12px; color: #737373;">Notes</div>
-                        </div>
-                        <div style="text-align: center; padding: 8px; background: var(--secondary); border-radius: 4px;">
-                            <div style="font-size: 1.5rem; font-weight: 600; color: var(--accent);">${copyCount}</div>
-                            <div style="font-size: 12px; color: #737373;">Copy</div>
-                        </div>
-                        <div style="text-align: center; padding: 8px; background: var(--secondary); border-radius: 4px;">
-                            <div style="font-size: 1.5rem; font-weight: 600; color: var(--accent);">${totalTasks}</div>
-                            <div style="font-size: 12px; color: #737373;">Tasks</div>
-                        </div>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px;">
-                        <div style="font-size: 12px; color: #737373;">
-                            Created: ${project.createdAt ? formatDate(project.createdAt) : 'Unknown'}
-                        </div>
-                        <div style="display: flex; gap: 8px;">
-                            <button class="archive-btn" onclick="event.stopPropagation(); openProjectSettings(${project.id})" style="background: #171717;">
-                                Settings
-                            </button>
-                            <button class="archive-btn" onclick="event.stopPropagation(); toggleArchiveProject(${project.id})">
-                                ${project.archived ? 'Restore' : 'Archive'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }).join('');
-    
-    // Setup delete listeners after rendering
-    setupDeleteListeners();
-    }
-}
-
-function renderBriefs() {
-    const list = getEl('briefsList');
-    if (!list) {
-        console.warn('briefsList element not found');
-        return;
-    }
-    
-    if (!currentProject.briefs) currentProject.briefs = [];
-    
-    // Ensure briefs have order values
-    currentProject.briefs.forEach((brief, index) => {
-        if (brief.order === undefined) {
-            brief.order = index;
-        }
-        // Ensure required properties exist
-        if (!brief.id) brief.id = generateId();
-        if (!brief.title) brief.title = 'Untitled Brief';
-        if (!brief.createdAt) brief.createdAt = getCurrentTimestamp();
-    });
-    
-    // Sort briefs by order
-    const sortedBriefs = [...currentProject.briefs].sort((a, b) => (a.order || 0) - (b.order || 0));
-    
-    try {
-        list.innerHTML = sortedBriefs.map(brief => {
-            const linkedCount = getLinkedItemsCount(brief.id);
-            
-            // Assign link color if not already assigned (for backwards compatibility)
-            if (!brief.linkColor) {
-                brief.linkColor = getNextLinkColor();
-                // Only save if we actually assigned a new color
-                setTimeout(() => saveProjects(), 0);
-            }
-            
-            // Use the brief's assigned color always (not just when linked)
-            const borderColor = brief.linkColor || '#a3a3a3';
-            
-            // Handle backwards compatibility and rich text content
-            const proposition = brief.proposition || '';
-            const clientBrief = brief.clientBrief || brief.content || '';
-            const clientBriefRich = brief.clientBriefRich || '';
-            const hasProposition = proposition.trim().length > 0;
-            const hasClientBrief = clientBrief.trim().length > 0 || clientBriefRich.trim().length > 0;
-            
-            // Get preview content - prefer rich content, fallback to plain text
-            let clientBriefPreview = '';
-            if (clientBriefRich && clientBriefRich.trim()) {
-                // Convert rich content to plain text for preview
-                clientBriefPreview = truncateContent(htmlToText(clientBriefRich), 120);
-            } else if (clientBrief) {
-                clientBriefPreview = truncateContent(clientBrief, 120);
-            }
-            
-            // Safely serialize the brief data
-            const serializedBrief = safeSerializeItem(brief);
-            
-            return `
-                <div class="item brief-item sortable-item ${linkedCount > 0 ? 'linked-item' : ''}" 
-                     draggable="true"
-                     data-item="${serializedBrief}"
-                     data-type="brief"
-                     data-id="${brief.id}"
-                     ondragstart="handleDragStart(event)"
-                     ondragend="handleDragEnd(event)"
-                     ondblclick="openItemEditor(findItem('${brief.id}', 'brief'), 'brief')"
-                     style="border-left: 3px solid ${borderColor};">
-                    <div class="grab-handle"></div>
-                    <div class="item-type type-brief">Brief</div>
-                    <div class="item-header">
-                        <div class="item-title">${brief.title}</div>
-                    </div>
-                    <div class="item-meta">
-                        Created: ${formatDate(brief.createdAt)}
-                        ${linkedCount > 0 ? ` • ${linkedCount} linked item${linkedCount > 1 ? 's' : ''}` : ''}
-                        ${clientBriefRich ? ' • Rich text' : ''}
-                    </div>
-                    
-                    ${hasProposition ? `
-                        <div style="margin: 8px 0; padding: 8px; background: #f0f9ff; border-left: 3px solid #0ea5e9; border-radius: 4px;">
-                            <div style="font-size: 11px; font-weight: 600; color: #0369a1; text-transform: uppercase; margin-bottom: 4px;">Proposition</div>
-                            <div style="color: #525252; line-height: 1.4; font-size: 13px;">
-                                ${truncateContent(proposition, 120)}
-                            </div>
-                        </div>
-                    ` : ''}
-                    
-                    ${hasClientBrief ? `
-                        <div style="margin: 8px 0; padding: 8px; background: #fefce8; border-left: 3px solid #eab308; border-radius: 4px;">
-                            <div style="font-size: 11px; font-weight: 600; color: #a16207; text-transform: uppercase; margin-bottom: 4px;">Client Brief ${clientBriefRich ? '(Rich Text)' : ''}</div>
-                            <div style="color: #525252; line-height: 1.4; font-size: 13px;">
-                                ${clientBriefPreview}
-                            </div>
-                        </div>
-                    ` : ''}
-                    
-                    <div class="item-actions">
-                        <div style="font-size: 11px; color: #a3a3a3; font-style: italic; flex: 1;">
-                            Double-click to edit • Drag to create linked items
-                        </div>
-                        <button class="delete-btn" data-delete-type="brief" data-delete-id="${brief.id}">
-                            ×
-                        </button>
-                    </div>
-                </div>
-            `;
-        }).join('');
-        
-        console.log(`✓ Rendered ${sortedBriefs.length} briefs`);
-        
-    } catch (error) {
-        console.error('Error rendering briefs:', error);
-        list.innerHTML = '<div style="padding: 20px; color: #ef4444;">Error rendering briefs. Please refresh the page.</div>';
-    }
-}
-
-function renderNotes() {
-    const list = getEl('notesList');
-    if (!currentProject.notes) currentProject.notes = [];
-    
-    // Ensure notes have order values
-    currentProject.notes.forEach((note, index) => {
-        if (note.order === undefined) {
-            note.order = index;
-        }
-    });
-    
-    // Sort notes by order
-    const sortedNotes = [...currentProject.notes].sort((a, b) => (a.order || 0) - (b.order || 0));
-    
-    list.innerHTML = sortedNotes.map(note => {
-        const isLinked = note.linkedBriefId;
-        const linkedBrief = isLinked ? currentProject.briefs.find(b => b.id === note.linkedBriefId) : null;
-        const linkColor = getLinkColor(note, 'note');
-        const borderColor = linkColor || '#a3a3a3'; // Grey for unlinked
-        
-        // Safely serialize the note data
-        const serializedNote = safeSerializeItem(note);
-        
-        return `
-            <div class="item note-item sortable-item ${isLinked ? 'linked-item' : ''}" 
-                 draggable="true"
-                 data-item="${serializedNote}"
-                 data-type="note"
-                 data-id="${note.id}"
-                 ondragstart="handleDragStart(event)"
-                 ondragend="handleDragEnd(event)"
-                 ondblclick="openItemEditor(findItem('${note.id}', 'note'), 'note')"
-                 style="border-left: 3px solid ${borderColor};">
-                <div class="grab-handle"></div>
-                <div class="item-type type-note">Note</div>
-                <div class="item-header">
-                    <div class="item-title">${note.title}</div>
-                </div>
-                <div class="item-meta">
-                    Created: ${formatDate(note.createdAt)}
-                    ${isLinked && linkedBrief ? ` • Linked to "${linkedBrief.title}"` : ''}
-                </div>
-                ${note.content ? `
-                    <div style="margin: 8px 0; color: #525252; line-height: 1.4;">
-                        ${truncateContent(note.content)}
-                    </div>
-                ` : ''}
-                <div class="item-actions">
-                    <div style="font-size: 11px; color: #a3a3a3; font-style: italic; flex: 1;">
-                        Double-click to edit • Drag to create task
-                    </div>
-                    <button class="delete-btn" data-delete-type="note" data-delete-id="${note.id}">
-                        ×
-                    </button>
-                </div>
-            </div>
-        `;
-    }).join('');
-}
-
-function renderCopy() {
-    const list = getEl('copyList');
-    if (!currentProject.copy) currentProject.copy = [];
-    
-    // Ensure copy items have order values
-    currentProject.copy.forEach((copy, index) => {
-        if (copy.order === undefined) {
-            copy.order = index;
-        }
-    });
-    
-    // Sort copy items by order
-    const sortedCopy = [...currentProject.copy].sort((a, b) => (a.order || 0) - (b.order || 0));
-    
-    list.innerHTML = sortedCopy.map(copy => {
-        const isLinked = copy.linkedBriefId;
-        const linkedBrief = isLinked ? currentProject.briefs.find(b => b.id === copy.linkedBriefId) : null;
-        const linkColor = getLinkColor(copy, 'copy');
-        const borderColor = linkColor || '#a3a3a3'; // Grey for unlinked
-        
-        // Safely serialize the copy data
-        const serializedCopy = safeSerializeItem(copy);
-        
-        return `
-            <div class="item copy-item sortable-item ${isLinked ? 'linked-item' : ''}" 
-                 draggable="true"
-                 data-item="${serializedCopy}"
-                 data-type="copy"
-                 data-id="${copy.id}"
-                 ondragstart="handleDragStart(event)"
-                 ondragend="handleDragEnd(event)"
-                 ondblclick="openItemEditor(findItem('${copy.id}', 'copy'), 'copy')"
-                 style="border-left: 3px solid ${borderColor};">
-                <div class="grab-handle"></div>
-                <div class="item-type type-copy">Copy</div>
-                <div class="item-header">
-                    <div class="item-title">${copy.title}</div>
-                </div>
-                <div class="item-meta">
-                    Created: ${formatDate(copy.createdAt)}
-                    ${isLinked && linkedBrief ? ` • Linked to "${linkedBrief.title}"` : ''}
-                </div>
-                ${copy.content ? `
-                    <div style="margin: 8px 0; color: #525252; line-height: 1.4;">
-                        ${truncateContent(copy.content)}
-                    </div>
-                ` : ''}
-                <div class="item-actions">
-                    <div style="font-size: 11px; color: #a3a3a3; font-style: italic; flex: 1;">
-                        Double-click to edit • Drag to create task
-                    </div>
-                    <button class="delete-btn" data-delete-type="copy" data-delete-id="${copy.id}">
-                        ×
-                    </button>
-                </div>
-            </div>
-        `;
-    }).join('');
-}
-
-function renderProjectTasks() {
-    const container = getEl('projectTaskContainer');
-    if (!container || !currentProject) return;
-    
-    if (!currentProject.tasks) currentProject.tasks = [];
-    
-    // Ensure tasks have order values
-    currentProject.tasks.forEach((task, index) => {
-        if (task.order === undefined) {
-            task.order = index;
-        }
-    });
-    
-    // Sort tasks with completed at bottom
-    const sortedTasks = sortTasksWithCompletedAtBottom(currentProject.tasks);
-    
-    if (sortedTasks.length === 0) {
-        container.innerHTML = '<div style="text-align: center; padding: 20px; color: #737373;">No tasks yet</div>';
-        return;
-    }
-    
-    container.innerHTML = sortedTasks.map(task => {
-        const hasSource = task.sourceItemId && task.sourceItemType;
-        let sourceItem = null;
-        if (hasSource) {
-            switch(task.sourceItemType) {
-                case 'brief':
-                    sourceItem = currentProject.briefs.find(b => b.id === task.sourceItemId);
-                    break;
-                case 'note':
-                    sourceItem = currentProject.notes.find(n => n.id === task.sourceItemId);
-                    break;
-                case 'copy':
-                    sourceItem = currentProject.copy.find(c => c.id === task.sourceItemId);
-                    break;
-            }
-        }
-        
-        const linkColor = getLinkColor(task, 'task') || '#10b981';
-        
-        // Safely serialize the task data
-        const serializedTask = safeSerializeItem(task);
-        
-        return `
-            <div class="project-task-item" 
-                 draggable="true"
-                 data-item="${serializedTask}"
-                 data-type="task"
-                 data-id="${task.id}"
-                 ondragstart="handleDragStart(event)"
-                 ondragend="handleDragEnd(event)"
-                 ondblclick="openTaskSource('${task.id}')"
-                 style="
-                    background: white;
-                    border: 1px solid #e5e5e5;
-                    border-left: 3px solid ${linkColor};
-                    border-radius: 4px;
-                    margin-bottom: 12px;
-                    padding: 0px;
-                    position: relative;
-                    cursor: grab;
-                    transition: all 0.2s ease;
-                    ${task.completed ? 'opacity: 0.6;' : ''}
-                 ">
-                
-                <div style="position: absolute; top: 8px; right: 8px; background: #f5f5f5; color: #525252; padding: 2px 6px; border-radius: 2px; font-size: 10px; font-weight: 600; text-transform: uppercase;">Task</div>
-                
-                <div style="display: flex; gap: 0px; align-items: flex-start; margin-bottom: 6px; padding: 0px; margin: 0px;">
-                    <div style="background-color: transparent; border: none; margin: 0; margin-left: 39px; margin-top: 5px; padding: 0; flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;">
-                        <input type="checkbox" 
-                               ${task.completed ? 'checked' : ''}
-                               onclick="event.stopPropagation(); toggleProjectTask('${task.id}')"
-                               style="width: 16px; height: 16px; margin: 0; padding: 0; cursor: pointer;">
-                    </div>
-                    <div style="flex: 1; min-width: 0; margin: 0; padding: 0; padding-left: 8px;">
-                        <div style="font-weight: 600; color: #171717; font-size: 14px; line-height: 1.4; margin: 0; padding: 0; ${task.completed ? 'text-decoration: line-through;' : ''}">${task.title}</div>
-                    </div>
-                </div>
-                
-                <div style="position: absolute; left: 8px; top: 16px;">
-                    <div class="grab-handle"></div>
-                </div>
-                
-                <div style="font-size: 12px; color: #737373; margin-bottom: 8px; padding-left: 63px; ${task.completed ? 'text-decoration: line-through;' : ''}">
-                    Created: ${formatDate(task.createdAt)}
-                    ${hasSource && sourceItem ? ` • From: "${sourceItem.title}"` : ''}
-                    ${task.completed && task.completedAt ? ` • Completed: ${formatDate(task.completedAt)}` : ''}
-                </div>
-                
-                ${task.content ? `
-                    <div style="margin: 6px 0; color: #525252; line-height: 1.4; font-size: 13px; padding-left: 63px; ${task.completed ? 'text-decoration: line-through;' : ''}">
-                        ${truncateContent(task.content)}
-                    </div>
-                ` : ''}
-                
-                <div style="font-size: 11px; color: #a3a3a3; font-style: italic; margin-top: 8px; margin-bottom: 8px; padding-left: 63px; padding-right: 8px; display: flex; justify-content: space-between; align-items: center;">
-                    <span>${hasSource ? 'Double-click to open source' : 'Double-click to edit'} • Drag to reorder within tasks</span>
-                    <div style="display: flex; gap: 8px;">
-                        ${hasSource && (task.sourceItemType === 'note' || task.sourceItemType === 'copy') ? `
-                            <span style="background: #fce7f3; color: #be185d; padding: 2px 6px; border-radius: 2px; font-size: 10px; font-weight: 600; text-transform: uppercase; cursor: pointer;" onclick="event.stopPropagation(); diveInToProjectSource('${task.id}')" title="Open in focus mode with Pomodoro">
-                                Dive In
-                            </span>
-                        ` : ''}
-                    </div>
-                </div>
-            </div>
-        `;
-    }).join('');
-}
-
-function findItem(itemId, itemType) {
-    if (!currentProject) return null;
-    
-    switch(itemType) {
-        case 'brief':
-            return currentProject.briefs.find(item => item.id == itemId);
-        case 'note':
-            return currentProject.notes.find(item => item.id == itemId);
-        case 'copy':
-            return currentProject.copy.find(item => item.id == itemId);
-        case 'task':
-            return currentProject.tasks.find(item => item.id == itemId);
-        default:
-            return null;
-    }
-}
-
-function toggleProjectTask(taskId) {
-    const task = currentProject.tasks.find(t => t.id == taskId);
-    if (task) {
-        task.completed = !task.completed;
-        // Add completion timestamp when completed
-        if (task.completed) {
-            task.completedAt = getCurrentTimestamp();
-        } else {
-            delete task.completedAt;
-        }
-        saveProjects();
-        renderProjectTasks();
-        
-        // Update global tasks if this affects them
-        renderGlobalTasks();
-    }
-}
-
-function diveInToProjectSource(taskId) {
-    console.log('Diving into project source:', taskId);
-    if (!currentProject) {
-        console.log('No current project');
-        return;
-    }
-    
-    // Find the task
-    const task = currentProject.tasks.find(t => t.id == taskId);
-    if (!task) {
-        console.log('Task not found in project');
-        return;
-    }
-    
-    // Only proceed if the source is a note or copy
-    if (!task.sourceItemId || !task.sourceItemType || (task.sourceItemType !== 'note' && task.sourceItemType !== 'copy')) {
-        console.log('Task source is not a note or copy, cannot dive in');
-        showNotification('Dive In is only available for tasks created from notes or copy');
-        return;
-    }
-    
-    // Find the source item
-    let sourceItem = null;
-    switch(task.sourceItemType) {
-        case 'note':
-            sourceItem = currentProject.notes.find(n => n.id === task.sourceItemId);
-            break;
-        case 'copy':
-            sourceItem = currentProject.copy.find(c => c.id === task.sourceItemId);
-            break;
-    }
-    
-    if (sourceItem) {
-        console.log('Found source item, entering focus mode:', sourceItem);
-        // Open the item editor
-        openItemEditor(sourceItem, task.sourceItemType);
-        
-        // Wait for editor to be ready, then enter focus mode and start pomodoro
-        setTimeout(() => {
-            // Reset pomodoro to work session if it's currently a break
-            if (pomodoroIsBreak) {
-                pomodoroIsBreak = false;
-                pomodoroTimeLeft = 25 * 60;
-                updatePomodoroDisplay();
-                updatePomodoroStatus();
-            }
-            
-            // Start the pomodoro and enter focus mode
-            if (!pomodoroIsRunning) {
-                startPomodoro();
-            }
-            
-            showNotification(`Diving into "${sourceItem.title}" - Focus mode activated!`);
-        }, 300);
-    } else {
-        console.log('Source item not found in project');
-        showNotification('Source item not found');
-    }
-}
-
-function updateProjectSelector() {
-    const select = getEl('projectSelect');
-    const activeProjects = projects.filter(project => !project.archived);
-    select.innerHTML = '<option value="">Select a project...</option>' +
-        activeProjects.map(project => `<option value="${project.id}">${project.name}</option>`).join('');
-}
-
-function updateSettingsButton() {
-    const settingsBtn = getEl('projectSettingsBtn');
-    const archiveBtn = getEl('archiveToggle');
-    
-    if (currentProject) {
-        setDisplay('projectSettingsBtn', 'inline-block');
-        setDisplay('archiveToggle', 'none');
-    } else {
-        setDisplay('projectSettingsBtn', 'none');
-        setDisplay('archiveToggle', 'inline-block');
-    }
-}
-
-function openProjectSettings(projectId) {
-    const project = projectId ? projects.find(p => p.id === projectId) : currentProject;
-    if (!project) return;
-    
-    setValue('settingsProjectName', project.name);
-    setValue('settingsColorTheme', project.colorTheme || 'blue');
-    setDisplay('projectSettingsModal', 'block');
-    
-    // Store which project we're editing
-    window.currentSettingsProject = project;
-}
-
-function saveProjectSettings() {
-    const project = window.currentSettingsProject;
-    if (!project) return;
-    
-    const newName = getValue('settingsProjectName');
-    const newTheme = getValue('settingsColorTheme');
-    
-    if (newName) {
-        project.name = newName;
-        project.colorTheme = newTheme;
-        
-        saveProjects();
-        updateProjectSelector();
-        closeModal('projectSettingsModal');
-        
-        // Update display
-        if (currentProject && currentProject.id === project.id) {
-            // Re-apply theme
-            const dashboard = getEl('dashboard');
-            colorThemes.forEach(theme => {
-                dashboard.classList.remove(`project-theme-${theme}`);
-            });
-            dashboard.classList.add(`project-theme-${newTheme}`);
-        }
-        
-        renderProjectOverview();
-        window.currentSettingsProject = null;
-    }
-}
-
-// ===== PROJECT EXPORT FUNCTIONALITY =====
-
-function exportProjectAsWord() {
-    const project = window.currentSettingsProject;
-    if (!project) return;
-    
-    try {
-        showNotification('Generating project export...');
-        
-        // Generate HTML content for the entire project
-        const projectHtml = generateProjectHtml(project);
-        
-        // Create a downloadable HTML file (Word-compatible)
-        const blob = new Blob([projectHtml], { type: 'application/msword' });
-        const url = URL.createObjectURL(blob);
-        
-        // Create download link
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `${project.name.replace(/[^a-z0-9]/gi, '_')}_Export.doc`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        
-        // Clean up
-        URL.revokeObjectURL(url);
-        
-        showNotification('Project exported successfully!');
-    } catch (error) {
-        console.error('Export error:', error);
-        showNotification('Export failed. Please try again.');
-    }
-}
-
-function generateProjectHtml(project) {
-    const createdDate = project.createdAt ? formatDate(project.createdAt) : 'Unknown';
-    
-    // Count stats
-    const briefsCount = project.briefs ? project.briefs.length : 0;
-    const notesCount = project.notes ? project.notes.length : 0;
-    const copyCount = project.copy ? project.copy.length : 0;
-    const totalTasks = project.tasks ? project.tasks.length : 0;
-    const completedTasks = project.tasks ? project.tasks.filter(t => t.completed).length : 0;
-    
-    let html = `
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>${project.name} - Project Export</title>
-    <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; margin: 40px; }
-        h1 { color: #333; border-bottom: 3px solid #007acc; padding-bottom: 10px; }
-        h2 { color: #555; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-top: 30px; }
-        h3 { color: #666; margin-top: 25px; }
-        .project-stats { background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0; }
-        .item-section { margin: 20px 0; padding: 15px; border-left: 4px solid #007acc; background: #fafafa; }
-        .proposition { background: #e8f4fd; padding: 10px; border-left: 3px solid #007acc; margin: 10px 0; }
-        .client-brief { background: #fff9e6; padding: 10px; border-left: 3px solid #ffa500; margin: 10px 0; }
-        .task-list { margin: 10px 0; }
-        .task-item { margin: 5px 0; padding: 5px; background: white; border-left: 2px solid #28a745; }
-        .task-completed { text-decoration: line-through; opacity: 0.7; }
-        .linked-indicator { color: #007acc; font-style: italic; font-size: 0.9em; }
-        .meta-info { color: #666; font-size: 0.9em; margin: 5px 0; }
-        page-break-before: always;
-    </style>
-</head>
-<body>
-    <h1>${project.name}</h1>
-    
-    <div class="project-stats">
-        <strong>Project Overview</strong><br>
-        Created: ${createdDate}<br>
-        Description: ${project.description || 'No description provided'}<br><br>
-        
-        <strong>Content Summary:</strong><br>
-        • ${briefsCount} Brief${briefsCount !== 1 ? 's' : ''}<br>
-        • ${notesCount} Note${notesCount !== 1 ? 's' : ''}<br>
-        • ${copyCount} Copy item${copyCount !== 1 ? 's' : ''}<br>
-        • ${totalTasks} Task${totalTasks !== 1 ? 's' : ''} (${completedTasks} completed)<br>
-    </div>
-`;
-
-    // Export Briefs
-    if (project.briefs && project.briefs.length > 0) {
-        html += `<h2>Briefs (${project.briefs.length})</h2>`;
-        
-        project.briefs.forEach(brief => {
-            const linkedItems = getLinkedItemsForBrief(project, brief.id);
-            
-            html += `<div class="item-section">`;
-            html += `<h3>${brief.title}</h3>`;
-            html += `<div class="meta-info">Created: ${formatDate(brief.createdAt)}</div>`;
-            
-            if (brief.proposition && brief.proposition.trim()) {
-                html += `<div class="proposition"><strong>Proposition:</strong><br>${brief.proposition.replace(/\n/g, '<br>')}</div>`;
-            }
-            
-            if (brief.clientBriefRich && brief.clientBriefRich.trim()) {
-                html += `<div class="client-brief"><strong>Client Brief:</strong><br>${brief.clientBriefRich}</div>`;
-            } else if (brief.clientBrief && brief.clientBrief.trim()) {
-                html += `<div class="client-brief"><strong>Client Brief:</strong><br>${brief.clientBrief.replace(/\n/g, '<br>')}</div>`;
-            }
-            
-            if (linkedItems.notes.length > 0 || linkedItems.copy.length > 0) {
-                html += `<div class="linked-indicator">Linked Items: `;
-                const linkedDesc = [];
-                if (linkedItems.notes.length > 0) linkedDesc.push(`${linkedItems.notes.length} note${linkedItems.notes.length !== 1 ? 's' : ''}`);
-                if (linkedItems.copy.length > 0) linkedDesc.push(`${linkedItems.copy.length} copy item${linkedItems.copy.length !== 1 ? 's' : ''}`);
-                html += linkedDesc.join(', ') + `</div>`;
-            }
-            
-            html += `</div>`;
-        });
-    }
-    
-    // Export Notes
-    if (project.notes && project.notes.length > 0) {
-        html += `<h2>Notes (${project.notes.length})</h2>`;
-        
-        project.notes.forEach(note => {
-            const linkedBrief = note.linkedBriefId ? project.briefs.find(b => b.id === note.linkedBriefId) : null;
-            const linkedTasks = project.tasks ? project.tasks.filter(t => t.sourceItemType === 'note' && t.sourceItemId === note.id) : [];
-            
-            html += `<div class="item-section">`;
-            html += `<h3>${note.title}</h3>`;
-            html += `<div class="meta-info">Created: ${formatDate(note.createdAt)}</div>`;
-            
-            if (linkedBrief) {
-                html += `<div class="linked-indicator">Linked to brief: "${linkedBrief.title}"</div>`;
-            }
-            
-            if (note.richContent && note.richContent.trim()) {
-                html += `<div>${note.richContent}</div>`;
-            } else if (note.content && note.content.trim()) {
-                html += `<div>${note.content.replace(/\n/g, '<br>')}</div>`;
-            }
-            
-            if (linkedTasks.length > 0) {
-                html += `<div class="task-list"><strong>Related Tasks:</strong>`;
-                linkedTasks.forEach(task => {
-                    html += `<div class="task-item ${task.completed ? 'task-completed' : ''}">• ${task.title}</div>`;
-                });
-                html += `</div>`;
-            }
-            
-            html += `</div>`;
-        });
-    }
-    
-    // Export Copy
-    if (project.copy && project.copy.length > 0) {
-        html += `<h2>Copy (${project.copy.length})</h2>`;
-        
-        project.copy.forEach(copy => {
-            const linkedBrief = copy.linkedBriefId ? project.briefs.find(b => b.id === copy.linkedBriefId) : null;
-            const linkedTasks = project.tasks ? project.tasks.filter(t => t.sourceItemType === 'copy' && t.sourceItemId === copy.id) : [];
-            
-            html += `<div class="item-section">`;
-            html += `<h3>${copy.title}</h3>`;
-            html += `<div class="meta-info">Created: ${formatDate(copy.createdAt)}</div>`;
-            
-            if (linkedBrief) {
-                html += `<div class="linked-indicator">Linked to brief: "${linkedBrief.title}"</div>`;
-            }
-            
-            if (copy.richContent && copy.richContent.trim()) {
-                html += `<div>${copy.richContent}</div>`;
-            } else if (copy.content && copy.content.trim()) {
-                html += `<div>${copy.content.replace(/\n/g, '<br>')}</div>`;
-            }
-            
-            if (linkedTasks.length > 0) {
-                html += `<div class="task-list"><strong>Related Tasks:</strong>`;
-                linkedTasks.forEach(task => {
-                    html += `<div class="task-item ${task.completed ? 'task-completed' : ''}">• ${task.title}</div>`;
-                });
-                html += `</div>`;
-            }
-            
-            html += `</div>`;
-        });
-    }
-    
-    // Export Tasks
-    if (project.tasks && project.tasks.length > 0) {
-        html += `<h2>Tasks (${project.tasks.length})</h2>`;
-        
-        const pendingTasks = project.tasks.filter(t => !t.completed);
-        const completedTasks = project.tasks.filter(t => t.completed);
-        
-        if (pendingTasks.length > 0) {
-            html += `<h3>Pending Tasks (${pendingTasks.length})</h3>`;
-            pendingTasks.forEach(task => {
-                const sourceItem = getTaskSourceItem(project, task);
-                
-                html += `<div class="item-section">`;
-                html += `<h4>${task.title}</h4>`;
-                html += `<div class="meta-info">Created: ${formatDate(task.createdAt)}</div>`;
-                
-                if (sourceItem) {
-                    html += `<div class="linked-indicator">Source: ${task.sourceItemType} "${sourceItem.title}"</div>`;
-                }
-                
-                if (task.content && task.content.trim()) {
-                    html += `<div>${task.content.replace(/\n/g, '<br>')}</div>`;
-                }
-                
-                html += `</div>`;
-            });
-        }
-        
-        if (completedTasks.length > 0) {
-            html += `<h3>Completed Tasks (${completedTasks.length})</h3>`;
-            completedTasks.forEach(task => {
-                const sourceItem = getTaskSourceItem(project, task);
-                
-                html += `<div class="item-section">`;
-                html += `<h4 class="task-completed">${task.title}</h4>`;
-                html += `<div class="meta-info">Created: ${formatDate(task.createdAt)} | Completed: ${task.completedAt ? formatDate(task.completedAt) : 'Unknown'}</div>`;
-                
-                if (sourceItem) {
-                    html += `<div class="linked-indicator">Source: ${task.sourceItemType} "${sourceItem.title}"</div>`;
-                }
-                
-                if (task.content && task.content.trim()) {
-                    html += `<div class="task-completed">${task.content.replace(/\n/g, '<br>')}</div>`;
-                }
-                
-                html += `</div>`;
-            });
-        }
-    }
-    
-    html += `
-    <br><br>
-    <hr>
-    <div class="meta-info" style="text-align: center;">
-        Exported from Creative Project Manager on ${new Date().toLocaleDateString()}
-    </div>
-</body>
-</html>`;
-    
-    return html;
-}
-
-function getLinkedItemsForBrief(project, briefId) {
-    const notes = project.notes ? project.notes.filter(n => n.linkedBriefId === briefId) : [];
-    const copy = project.copy ? project.copy.filter(c => c.linkedBriefId === briefId) : [];
-    return { notes, copy };
-}
-
-function getTaskSourceItem(project, task) {
-    if (!task.sourceItemId || !task.sourceItemType) return null;
-    
-    switch(task.sourceItemType) {
-        case 'brief':
-            return project.briefs ? project.briefs.find(b => b.id === task.sourceItemId) : null;
-        case 'note':
-            return project.notes ? project.notes.find(n => n.id === task.sourceItemId) : null;
-        case 'copy':
-            return project.copy ? project.copy.find(c => c.id === task.sourceItemId) : null;
-        default:
-            return null;
-    }
-}
-
-function saveProjects() {
-    saveToStorage('projects', projects);
-    
-    // Clean up old completed tasks whenever we save
-    setTimeout(() => {
-        cleanupOldCompletedTasks();
-    }, 100);
-}
-
-// Autosave functions
-function updateAutosaveStatus(status) {
-    const autosaveText = getEl('autosaveText');
-    if (autosaveText) {
-        switch(status) {
-            case 'saving':
-                autosaveText.textContent = 'Saving...';
-                autosaveText.style.color = '#171717';
-                break;
-            case 'saved':
-                autosaveText.textContent = 'Saved';
-                autosaveText.style.color = '#16a34a';
-                // Reset to ready after 2 seconds
-                setTimeout(() => {
-                    if (autosaveText) {
-                        autosaveText.textContent = 'Ready';
-                        autosaveText.style.color = '#737373';
-                    }
-                }, 2000);
-                break;
-            case 'changes':
-                autosaveText.textContent = 'Unsaved changes...';
-                autosaveText.style.color = '#f59e0b';
-                break;
-            default:
-                autosaveText.textContent = 'Ready';
-                autosaveText.style.color = '#737373';
-        }
-    }
-}
-
-function debouncedAutosave() {
-    // Clear existing timeout
-    if (autosaveTimeout) {
-        clearTimeout(autosaveTimeout);
-    }
-    
-    // Show unsaved changes status
-    hasUnsavedChanges = true;
-    updateAutosaveStatus('changes');
-    
-    // Set new timeout for autosave
-    autosaveTimeout = setTimeout(() => {
-        if (hasUnsavedChanges) {
-            autosaveItem();
-        }
-    }, 1500); // Save after 1.5 seconds of inactivity
-}
-
-function autosaveItem() {
-    if (!currentEditingItem) return;
-    
-    updateAutosaveStatus('saving');
-    
-    const newTitle = getValue('editorItemTitle');
-    
-    if (!newTitle) {
-        updateAutosaveStatus('ready');
-        return;
-    }
-    
-    const oldTitle = currentEditingItem.title;
-    const titleChanged = oldTitle !== newTitle;
-    
-    // CRITICAL: Find and update the actual item in the project arrays
-    let actualItem = null;
-    let itemArray = null;
-    
-    switch(currentEditingType) {
-        case 'brief':
-            itemArray = currentProject.briefs;
-            actualItem = currentProject.briefs.find(item => item.id === currentEditingItem.id);
-            break;
-        case 'note':
-            itemArray = currentProject.notes;
-            actualItem = currentProject.notes.find(item => item.id === currentEditingItem.id);
-            break;
-        case 'copy':
-            itemArray = currentProject.copy;
-            actualItem = currentProject.copy.find(item => item.id === currentEditingItem.id);
-            break;
-        case 'task':
-            itemArray = currentProject.tasks;
-            actualItem = currentProject.tasks.find(item => item.id === currentEditingItem.id);
-            break;
-    }
-    
-    if (!actualItem) {
-        console.error('Could not find actual item in project arrays');
-        updateAutosaveStatus('ready');
-        return;
-    }
-    
-    // Update both the editing item and the actual item
-    currentEditingItem.title = newTitle;
-    actualItem.title = newTitle;
-    actualItem.lastModified = getCurrentTimestamp();
-    
-    console.log(`Title updated: "${oldTitle}" → "${newTitle}"`);
-    
-    // Check if content has actually changed to trigger reordering
-    let contentChanged = titleChanged;
-    
-    // Handle different item types
-    if (currentEditingType === 'brief') {
-        // Save brief-specific fields with rich text support
-        const oldProposition = actualItem.proposition || '';
-        const oldClientBrief = actualItem.clientBrief || '';
-        const oldClientBriefRich = actualItem.clientBriefRich || '';
-        
-        const newProposition = getValue('editorProposition');
-        const clientBriefField = getEl('editorClientBrief');
-        const newClientBriefRich = clientBriefField ? clientBriefField.innerHTML : '';
-        const newClientBrief = htmlToText(newClientBriefRich);
-        
-        contentChanged = contentChanged || 
-                        (oldProposition !== newProposition) || 
-                        (oldClientBrief !== newClientBrief) ||
-                        (oldClientBriefRich !== newClientBriefRich);
-        
-        // Update both items
-        currentEditingItem.proposition = newProposition;
-        currentEditingItem.clientBrief = newClientBrief;
-        currentEditingItem.clientBriefRich = newClientBriefRich;
-        
-        actualItem.proposition = newProposition;
-        actualItem.clientBrief = newClientBrief;
-        actualItem.clientBriefRich = newClientBriefRich;
-        
-        // Remove old content field for cleanup
-        delete actualItem.content;
-        delete currentEditingItem.content;
-    } else {
-        // Save content based on editor type
-        const richEditor = getEl('richEditor');
-        const textEditor = getEl('editorContent');
-        
-        if (richEditor && richEditor.style.display !== 'none') {
-            // Rich text editor - convert HTML to text for storage
-            const oldContent = actualItem.content || '';
-            const newContent = htmlToText(richEditor.innerHTML);
-            contentChanged = contentChanged || (oldContent !== newContent);
-            
-            // Update both items
-            currentEditingItem.content = newContent;
-            currentEditingItem.richContent = richEditor.innerHTML;
-            actualItem.content = newContent;
-            actualItem.richContent = richEditor.innerHTML;
-        } else if (textEditor) {
-            // Plain text editor
-            const oldContent = actualItem.content || '';
-            const newContent = textEditor.value.trim();
-            contentChanged = contentChanged || (oldContent !== newContent);
-            
-            // Update both items
-            currentEditingItem.content = newContent;
-            actualItem.content = newContent;
-        }
-    }
-    
-    // Update linked task names if title changed
-    if (titleChanged && (currentEditingType === 'brief' || currentEditingType === 'note' || currentEditingType === 'copy')) {
-        console.log(`Title changed, updating linked tasks for ${currentEditingType} ${actualItem.id}`);
-        updateLinkedTaskNames(actualItem.id, currentEditingType, newTitle);
-    }
-    
-    // Move to top if content changed and we're actively editing
-    if (contentChanged && currentProject) {
-        moveItemToTop(actualItem, currentEditingType);
-    }
-    
-    saveProjects();
-    
-    // Also save work context with each autosave
-    if (currentProject) {
-        saveCurrentContext();
-    }
-    
-    hasUnsavedChanges = false;
-    updateAutosaveStatus('saved');
-    
-    // Force immediate re-render to show changes
-    console.log('Re-rendering to show title changes');
-    switch(currentEditingType) {
-        case 'brief':
-            renderBriefs();
-            break;
-        case 'note':
-            renderNotes();
-            break;
-        case 'copy':
-            renderCopy();
-            break;
-        case 'task':
-            renderProjectTasks();
-            break;
-    }
-    
-    // If title changed and there are linked tasks, also re-render tasks
-    if (titleChanged && (currentEditingType === 'brief' || currentEditingType === 'note' || currentEditingType === 'copy')) {
-        renderProjectTasks();
-        renderGlobalTasks();
-    }
-}
-
-function updateLinkedTaskNames(sourceId, sourceType, newTitle) {
-    let tasksUpdated = 0;
-    
-    // Update linked tasks across all projects
-    projects.forEach(project => {
-        if (project.tasks && Array.isArray(project.tasks)) {
-            project.tasks.forEach(task => {
-                if (task.sourceItemType === sourceType && task.sourceItemId === sourceId) {
-                    task.title = newTitle;
-                    tasksUpdated++;
-                }
-            });
-        }
-    });
-    
-    if (tasksUpdated > 0) {
-        console.log(`Updated ${tasksUpdated} linked task names to "${newTitle}"`);
-    }
-}
-
-function moveItemToTop(item, itemType) {
-    if (!currentProject || !item) return;
-    
-    let itemArray;
-    switch(itemType) {
-        case 'brief':
-            itemArray = currentProject.briefs;
-            break;
-        case 'note':
-            itemArray = currentProject.notes;
-            break;
-        case 'copy':
-            itemArray = currentProject.copy;
-            break;
-        case 'task':
-            itemArray = currentProject.tasks;
-            break;
-        default:
-            return;
-    }
-    
-    // Update order values - move this item to top (order 0) and increment others
-    itemArray.forEach(arrayItem => {
-        if (arrayItem.id === item.id) {
-            arrayItem.order = 0;
-        } else if (arrayItem.order !== undefined) {
-            arrayItem.order += 1;
-        }
-    });
-    
-    console.log(`Moved ${itemType} "${item.title}" to top due to active editing`);
-}
-
-function setupAutosaveListeners() {
-    // Title field
-    const titleField = getEl('editorItemTitle');
-    if (titleField) {
-        titleField.addEventListener('input', debouncedAutosave);
-    }
-    
-    // Brief fields
-    const propositionField = getEl('editorProposition');
-    const clientBriefField = getEl('editorClientBrief');
-    if (propositionField) propositionField.addEventListener('input', debouncedAutosave);
-    if (clientBriefField && clientBriefField.contentEditable === 'true') {
-        clientBriefField.addEventListener('input', debouncedAutosave);
-        clientBriefField.addEventListener('paste', () => setTimeout(debouncedAutosave, 100));
-    }
-    
-    // Rich text editor
-    const richEditor = getEl('richEditor');
-    if (richEditor) {
-        richEditor.addEventListener('input', debouncedAutosave);
-        richEditor.addEventListener('paste', () => setTimeout(debouncedAutosave, 100));
-    }
-    
-    // Plain text editor
-    const textEditor = getEl('editorContent');
-    if (textEditor) {
-        textEditor.addEventListener('input', debouncedAutosave);
-        textEditor.addEventListener('paste', () => setTimeout(debouncedAutosave, 100));
-    }
-}
-
-// Make sure these functions are globally accessible
-window.openTaskSource = function(taskId) {
-    console.log('Opening task source for:', taskId);
-    if (!currentProject) {
-        console.log('No current project');
-        return;
-    }
-    
-    const task = currentProject.tasks.find(t => t.id == taskId);
-    if (!task || !task.sourceItemId || !task.sourceItemType) {
-        console.log('No source found for task, opening task editor instead');
-        openItemEditor(task, 'task');
-        return;
-    }
-    
-    // Find the source item
-    let sourceItem = null;
-    switch(task.sourceItemType) {
-        case 'brief':
-            sourceItem = currentProject.briefs.find(b => b.id === task.sourceItemId);
-            break;
-        case 'note':
-            sourceItem = currentProject.notes.find(n => n.id === task.sourceItemId);
-            break;
-        case 'copy':
-            sourceItem = currentProject.copy.find(c => c.id === task.sourceItemId);
-            break;
-    }
-    
-    if (sourceItem) {
-        console.log('Found source item:', sourceItem);
-        // Close current editor if open
-        const editorModal = getEl('itemEditor');
-        if (editorModal.style.display === 'block') {
-            closeEditor();
-        }
-        
-        // Small delay to ensure clean transition
-        setTimeout(() => {
-            openItemEditor(sourceItem, task.sourceItemType);
-        }, 100);
-    } else {
-        console.log('Source item not found, opening task editor instead');
-        openItemEditor(task, 'task');
-    }
-};
-
-// Setup delete button event listeners
-function setupDeleteListeners() {
-    // Remove existing listeners first
-    document.removeEventListener('click', handleDeleteClick);
-    
-    // Add single delegated event listener for all delete buttons
-    document.addEventListener('click', handleDeleteClick);
-}
-
-function handleDeleteClick(event) {
-    if (event.target.classList.contains('delete-btn')) {
-        event.stopPropagation();
-        event.preventDefault();
-        
-        const deleteType = event.target.getAttribute('data-delete-type');
-        const deleteId = event.target.getAttribute('data-delete-id');
-        
-        console.log('Delete button clicked:', deleteType, deleteId);
-        
-        switch(deleteType) {
-            case 'brief':
-                deleteBrief(deleteId);
-                break;
-            case 'note':
-                deleteNote(deleteId);
-                break;
-            case 'copy':
-                deleteCopy(deleteId);
-                break;
-        }
-    }
-}
-
-// ===== MIGRATION FUNCTION FOR EXISTING BRIEFS =====
-
-function migrateBriefsToRichText() {
-    let hasChanges = false;
-    
-    projects.forEach(project => {
-        if (project.briefs) {
-            project.briefs.forEach(brief => {
-                // If brief has clientBrief but no clientBriefRich, convert it
-                if (brief.clientBrief && !brief.clientBriefRich) {
-                    brief.clientBriefRich = textToHtml(brief.clientBrief);
-                    hasChanges = true;
-                }
-                // Handle old 'content' field
-                else if (brief.content && !brief.clientBrief && !brief.clientBriefRich) {
-                    brief.clientBrief = brief.content;
-                    brief.clientBriefRich = textToHtml(brief.content);
-                    delete brief.content;
-                    hasChanges = true;
-                }
-            });
-        }
-    });
-    
-    if (hasChanges) {
-        saveProjects();
-        console.log('Migrated existing briefs to rich text format');
-    }
-}
-
-// ===== ERROR RECOVERY AND DEBUGGING =====
-
-function forceDropZoneReset() {
-    console.log('🔧 Forcing drop zone reset...');
-    
-    // Clear all tracking
-    elementsWithListeners.clear();
-    
-    // Clean up everything
-    cleanupProjectDropZones();
-    
-    // Wait a bit then re-setup
-    setTimeout(() => {
-        setupProjectDropZones();
-        showNotification('Drop zones reset - try dragging again');
-    }, 100);
-}
-
-function debugDragAndDrop() {
-    console.log('🔍 Debugging drag and drop state:');
-    console.log('Current project:', currentProject?.name);
-    console.log('Elements with listeners:', Array.from(elementsWithListeners));
-    console.log('Dragged item:', draggedItem);
-    console.log('Dragged item type:', draggedItemType);
-    
-    // Check each column
-    const columns = ['briefsColumn', 'notesColumn', 'copyColumn', 'tasksColumn'];
-    columns.forEach(columnId => {
-        const element = getEl(columnId);
-        if (element) {
-            console.log(`${columnId}:`, {
-                exists: true,
-                hasDropType: element.hasAttribute('data-drop-type'),
-                dropType: element.getAttribute('data-drop-type'),
-                hasHandlers: !!element._dropHandlers,
-                tracked: elementsWithListeners.has(columnId)
-            });
-        } else {
-            console.log(`${columnId}:`, { exists: false });
-        }
-    });
-    
-    // Check draggable items
-    const draggableItems = document.querySelectorAll('[draggable="true"]');
-    console.log(`Found ${draggableItems.length} draggable items`);
-    
-    let itemsWithIssues = 0;
-    draggableItems.forEach((item, index) => {
-        const hasDataItem = item.hasAttribute('data-item');
-        const hasDataType = item.hasAttribute('data-type');
-        
-        if (!hasDataItem || !hasDataType) {
-            console.warn(`Item ${index} missing data:`, {
-                hasDataItem,
-                hasDataType,
-                element: item
-            });
-            itemsWithIssues++;
-        }
-    });
-    
-    console.log(`Items with issues: ${itemsWithIssues}`);
-    
-    if (itemsWithIssues > 0) {
-        console.log('🔧 Re-rendering project to fix item issues...');
-        renderProject();
-    }
-}
-
-function debugAutosave() {
-    console.log('🔍 Debugging autosave state:');
-    console.log('Current editing item:', currentEditingItem);
-    console.log('Current editing type:', currentEditingType);
-    console.log('Has unsaved changes:', hasUnsavedChanges);
-    
-    if (currentEditingItem && currentProject) {
-        // Find the actual item in arrays
-        let actualItem = null;
-        switch(currentEditingType) {
-            case 'brief':
-                actualItem = currentProject.briefs.find(item => item.id === currentEditingItem.id);
-                break;
-            case 'note':
-                actualItem = currentProject.notes.find(item => item.id === currentEditingItem.id);
-                break;
-            case 'copy':
-                actualItem = currentProject.copy.find(item => item.id === currentEditingItem.id);
-                break;
-            case 'task':
-                actualItem = currentProject.tasks.find(item => item.id === currentEditingItem.id);
-                break;
-        }
-        
-        console.log('Actual item in array:', actualItem);
-        console.log('Editing item reference same as array item?', currentEditingItem === actualItem);
-        
-        if (actualItem) {
-            console.log('Titles match?', currentEditingItem.title === actualItem.title);
-            console.log('Editing item title:', currentEditingItem.title);
-            console.log('Array item title:', actualItem.title);
-            console.log('Input field value:', getValue('editorItemTitle'));
-        }
-        
-        // Check for linked tasks
-        if (currentEditingType === 'brief' || currentEditingType === 'note' || currentEditingType === 'copy') {
-            const linkedTasks = currentProject.tasks.filter(task => 
-                task.sourceItemId == currentEditingItem.id && task.sourceItemType === currentEditingType
-            );
-            console.log(`Found ${linkedTasks.length} linked tasks:`, linkedTasks.map(t => t.title));
-        }
-    }
-}
-
-function testIncrementalNaming() {
-    console.log('🧪 Testing incremental naming:');
-    if (!currentProject) {
-        console.log('No current project');
-        return;
-    }
-    
-    console.log('Current notes:', currentProject.notes.map(n => n.title));
-    console.log('Current copy:', currentProject.copy.map(c => c.title));
-    
-    // Test note naming
-    const testNoteName = generateIncrementalName('Test Brief - note', 'note');
-    console.log('Test note name would be:', testNoteName);
-    
-    // Test copy naming
-    const testCopyName = generateIncrementalName('Test Brief - copy', 'copy');
-    console.log('Test copy name would be:', testCopyName);
-}
-
-function generateIncrementalName(baseName, itemType) {
-    if (!currentProject) return baseName;
-    
-    let itemArray;
-    switch(itemType) {
-        case 'brief':
-            itemArray = currentProject.briefs;
-            break;
-        case 'note':
-            itemArray = currentProject.notes;
-            break;
-        case 'copy':
-            itemArray = currentProject.copy;
-            break;
-        case 'task':
-            itemArray = currentProject.tasks;
-            break;
-        default:
-            return baseName;
-    }
-    
-    // Check if the base name exists
-    const existingNames = itemArray.map(item => item.title.toLowerCase());
-    let finalName = baseName;
-    let counter = 2;
-    
-    while (existingNames.includes(finalName.toLowerCase())) {
-        finalName = `${baseName} ${counter}`;
-        counter++;
-    }
-    
-    return finalName;
-}
-
-// Add to window for debugging
-window.forceDropZoneReset = forceDropZoneReset;
-window.debugDragAndDrop = debugDragAndDrop;
-window.debugAutosave = debugAutosave;
-window.testIncrementalNaming = testIncrementalNaming;
-
-// ===== INITIALIZATION =====
-
-function initializeApp() {
-    try {
-        console.log('🚀 Initializing Creative Project Manager...');
-        
-        // Load work context first
-        loadWorkContext();
-        
-        // Load projects from storage with error handling
-        const savedProjects = loadFromStorage('projects');
-        if (savedProjects) {
-            projects = Array.isArray(savedProjects) ? savedProjects : [];
-            
-            // Add missing properties to existing projects for backward compatibility
-            projects.forEach(project => {
-                if (!project.colorTheme) {
-                    project.colorTheme = getNextColorTheme();
-                }
-                if (project.archived === undefined) {
-                    project.archived = false;
-                }
-                // Ensure arrays exist
-                if (!project.briefs) project.briefs = [];
-                if (!project.notes) project.notes = [];
-                if (!project.copy) project.copy = [];
-                if (!project.tasks) project.tasks = [];
-                
-                // Migrate old brief format to new format
-                if (project.briefs) {
-                    project.briefs.forEach(brief => {
-                        if (brief.content && !brief.proposition && !brief.clientBrief) {
-                            // Migrate old format: move content to clientBrief, leave proposition empty
-                            brief.clientBrief = brief.content;
-                            brief.proposition = '';
-                            delete brief.content;
-                        }
-                        // Ensure new fields exist
-                        if (brief.proposition === undefined) brief.proposition = '';
-                        if (brief.clientBrief === undefined) brief.clientBrief = '';
-                        // Assign link color if missing
-                        if (!brief.linkColor) {
-                            brief.linkColor = getNextLinkColor();
-                        }
-                    });
-                }
-                
-                // Ensure tasks have order values
-                if (project.tasks) {
-                    project.tasks.forEach((task, index) => {
-                        if (task.order === undefined) {
-                            task.order = index;
-                        }
-                    });
-                }
-                
-                // Ensure all other item types have order values
-                if (project.briefs) {
-                    project.briefs.forEach((brief, index) => {
-                        if (brief.order === undefined) {
-                            brief.order = index;
-                        }
-                    });
-                }
-                
-                if (project.notes) {
-                    project.notes.forEach((note, index) => {
-                        if (note.order === undefined) {
-                            note.order = index;
-                        }
-                    });
-                }
-                
-                if (project.copy) {
-                    project.copy.forEach((copy, index) => {
-                        if (copy.order === undefined) {
-                            copy.order = index;
-                        }
-                    });
-                }
-            });
-            saveProjects(); // Save the updated projects
-            
-            // Migrate existing briefs to rich text format
-            migrateBriefsToRichText();
-            
-            // Initialize the link color index based on existing colors
-            initializeLinkColorIndex();
-        } else {
-            projects = [];
-            // Initialize link color index for new installations
-            initializeLinkColorIndex();
-        }
-        
-        // Initialize global tasks system
-        loadGlobalTaskOrder();
-        cleanupGlobalTaskOrder();
-        autoPopulateTopThree();
-        setupTopTasksDropZones();
-        
-        // Clean up old completed tasks (24+ hours old)
-        cleanupOldCompletedTasks();
-        
-        // Load pomodoro state
-        loadPomodoroState();
-        
-        // Initialize pomodoro daily count
-        const today = new Date().toDateString();
-        const savedDaily = loadFromStorage('pomodoroDaily');
-        
-        if (savedDaily) {
-            pomodoroDailyCount = savedDaily.date === today ? savedDaily.count : 0;
-        }
-        
-        updateProjectSelector();
-        showProjectOverview();
-        updateSettingsButton();
-        
-        // Setup delete button event listeners
-        setupDeleteListeners();
-        
-        // Setup project column drop zones - with retry mechanism
-        let dropZoneAttempts = 0;
-        const maxAttempts = 3;
-        
-        const attemptDropZoneSetup = () => {
-            dropZoneAttempts++;
-            console.log(`Setting up drop zones (attempt ${dropZoneAttempts}/${maxAttempts})`);
-            
-            setupProjectDropZones();
-            
-            // Validate after setup
-            setTimeout(() => {
-                const columns = ['briefsColumn', 'notesColumn', 'copyColumn', 'tasksColumn'];
-                const workingColumns = columns.filter(id => {
-                    const element = getEl(id);
-                    return element && element.hasAttribute('data-drop-type') && element._dropHandlers;
-                });
-                
-                if (workingColumns.length < columns.length && dropZoneAttempts < maxAttempts) {
-                    console.warn(`Only ${workingColumns.length}/${columns.length} drop zones working, retrying...`);
-                    setTimeout(attemptDropZoneSetup, 500);
-                } else {
-                    console.log(`✅ Drop zone setup complete: ${workingColumns.length}/${columns.length} working`);
-                }
-            }, 200);
-        };
-        
-        // Initial setup
-        setTimeout(attemptDropZoneSetup, 100);
-        
-        // Render breadcrumbs
-        renderBreadcrumbs();
-        
-        // Set up periodic cleanup (every hour)
-        setInterval(() => {
-            cleanupOldCompletedTasks();
-        }, 60 * 60 * 1000); // Run every hour
-        
-        // Set up periodic drop zone health check (every 30 seconds)
-        setInterval(() => {
-            if (currentProject) {
-                const columns = ['briefsColumn', 'notesColumn', 'copyColumn', 'tasksColumn'];
-                const brokenColumns = columns.filter(id => {
-                    const element = getEl(id);
-                    return element && (!element.hasAttribute('data-drop-type') || !element._dropHandlers);
-                });
-                
-                if (brokenColumns.length > 0) {
-                    console.warn(`🔧 Detected broken drop zones: ${brokenColumns.join(', ')}, fixing...`);
-                    forceDropZoneReset();
-                }
-            }
-        }, 30000);
-        
-        // Offer work resumption after a short delay
-        setTimeout(() => {
-            offerWorkResumption();
-        }, 2000);
-        
-        console.log('✅ Creative Project Manager initialized successfully');
-        
-    } catch (error) {
-        console.error('❌ Error during initialization:', error);
-        // Fallback initialization
-        projects = [];
-        initializeLinkColorIndex();
-        loadGlobalTaskOrder();
-        updateProjectSelector();
-        showProjectOverview();
-        updateSettingsButton();
-        setupDeleteListeners();
-        
-        // Still try to setup drop zones
-        setTimeout(() => {
-            setupProjectDropZones();
-        }, 1000);
-        
-        renderBreadcrumbs();
-        
-        showNotification('App loaded with some issues - drag & drop might need a refresh');
-    }
-}
-
-// Initialize on load
-document.addEventListener('DOMContentLoaded', initializeApp);
-
-// Listen for fullscreen changes
-document.addEventListener('fullscreenchange', function() {
-    if (!document.fullscreenElement) {
-        // User exited fullscreen - clean up our fullscreen mode
-        const editorModal = getEl('itemEditor');
-        if (editorModal) {
-            editorModal.classList.remove('fullscreen');
-            editorModal.classList.remove('true-fullscreen');
-        }
-        
-        // Remove overlay
-        const overlay = getEl('focusOverlay');
-        if (overlay) {
-            overlay.remove();
-        }
-        
-        // Restore cursor
-        document.body.style.cursor = 'default';
-    }
-});
-
-// Close modals when clicking outside
-window.onclick = function(event) {
-    if (event.target.classList.contains('modal') || event.target.classList.contains('editor-modal')) {
-        if (event.target.id === 'confirmModal') {
-            cancelConfirm();
-        } else {
-            event.target.style.display = 'none';
-        }
-    }
-}
-
-// Keyboard shortcuts
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-        // Close confirmation modal first if open
-        const confirmModal = getEl('confirmModal');
-        if (confirmModal && confirmModal.style.display === 'block') {
-            cancelConfirm();
-            return;
-        }
-        
-        // Close help modal if open
-        const helpModal = getEl('helpModal');
-        if (helpModal && helpModal.style.display === 'block') {
-            closeModal('helpModal');
-            return;
-        }
-        
-        // Exit fullscreen mode if active
-        const editorModal = getEl('itemEditor');
-        if (editorModal && (editorModal.classList.contains('fullscreen') || editorModal.classList.contains('true-fullscreen'))) {
-            exitFocusMode();
-            if (pomodoroIsRunning) {
-                pausePomodoro();
-            }
-            return;
-        }
-        
-        // Otherwise close modals normally
-        document.querySelectorAll('.modal, .editor-modal').forEach(modal => {
-            modal.style.display = 'none';
-        });
-    }
-    
-    // F1 or Ctrl+? to open help
-    if (e.key === 'F1' || (e.key === '?' && e.ctrlKey)) {
-        e.preventDefault();
-        showHelp();
-        return;
-    }
-    
-    // Enter key on confirmation modal
-    if (e.key === 'Enter') {
-        const confirmModal = getEl('confirmModal');
-        if (confirmModal && confirmModal.style.display === 'block') {
-            proceedConfirm();
-            return;
-        }
-    }
-    
-    // Ctrl+S for manual save (also saves context)
-    if (e.key === 's' && e.ctrlKey) {
-        e.preventDefault();
-        if (getEl('itemEditor').style.display === 'block') {
-            autosaveItem();
-            showContextIndicator('Work saved with context preserved');
-        }
-    }
-    
-    // Alt+B for breadcrumb navigation
-    if (e.key === 'b' && e.altKey) {
-        e.preventDefault();
-        const breadcrumbContainer = getEl('breadcrumbContainer');
-        if (breadcrumbContainer && breadcrumbContainer.style.display !== 'none') {
-            // Focus on the last breadcrumb
-            const breadcrumbs = document.querySelectorAll('.breadcrumb-item');
-            if (breadcrumbs.length > 0) {
-                breadcrumbs[breadcrumbs.length - 1].focus();
-            }
-        }
-    }
-    
-    // Ctrl+Shift+R for work resumption
-    if (e.key === 'R' && e.ctrlKey && e.shiftKey) {
-        e.preventDefault();
-        if (workContext.currentContext) {
-            // Auto-resume without asking
-            if (!currentProject || currentProject.id != workContext.currentContext.projectId) {
-                switchToProject(workContext.currentContext.projectId, () => {
-                    setTimeout(() => {
-                        restoreContext(workContext.currentContext);
-                    }, 200);
-                });
-            } else {
-                restoreContext(workContext.currentContext);
-            }
-            showContextIndicator(`Resumed work on "${workContext.currentContext.title}"`, true);
-        }
-    }
-    
-    // Pomodoro shortcuts when editor is open
-    if (getEl('itemEditor') && getEl('itemEditor').style.display === 'block') {
-        const pomodoroTimer = getEl('pomodoroTimer');
-        if (pomodoroTimer && pomodoroTimer.style.display === 'block') {
-            // Check if we're not in a contenteditable field
-            const isInEditor = e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT' || e.target.contentEditable === 'true';
-            
-            if (e.code === 'Space' && !isInEditor) {
-                e.preventDefault();
-                if (pomodoroIsRunning) {
-                    pausePomodoro();
-                } else {
-                    startPomodoro();
-                }
-            }
-            
-            if (e.key === 'r' && e.ctrlKey) {
-                e.preventDefault();
-                resetPomodoro();
-            }
-        }
-    }
-});
-
-// Make all functions available globally
-window.openProjectModal = openProjectModal;
-window.closeModal = closeModal;
-window.showHelp = showHelp;
-window.closeEditor = closeEditor;
-window.showProjectOverview = showProjectOverview;
-window.toggleArchivedProjects = toggleArchivedProjects;
-window.selectProject = selectProject;
-window.switchProject = switchProject;
-window.createProject = createProject;
-window.addQuickBrief = addQuickBrief;
-window.addQuickNote = addQuickNote;
-window.addQuickCopy = addQuickCopy;
-window.addQuickTask = addQuickTask;
-window.handleEnterKey = handleEnterKey;
-window.openItemEditor = openItemEditor;
-window.findItem = findItem;
-window.handleDragStart = handleDragStart;
-window.handleDragEnd = handleDragEnd;
-window.handleDragOver = handleDragOver;
-window.handleDragLeave = handleDragLeave;
-window.handleDrop = handleDrop;
-window.setupProjectDropZones = setupProjectDropZones;
-window.handleColumnDragOver = handleColumnDragOver;
-window.handleColumnDragLeave = handleColumnDragLeave;
-window.handleColumnDrop = handleColumnDrop;
-window.reorderItemInColumn = reorderItemInColumn;
-window.calculateDropPosition = calculateDropPosition;
-window.showDropPositionIndicator = showDropPositionIndicator;
-window.formatRichText = formatRichText;
-window.createLink = createLink;
-window.copyContentToClipboard = copyContentToClipboard;
-window.insertStandardHeadings = insertStandardHeadings;
-window.openProjectSettings = openProjectSettings;
-window.saveProjectSettings = saveProjectSettings;
-window.exportProjectAsWord = exportProjectAsWord;
-window.exitFocusMode = exitFocusMode;
-window.deleteBrief = deleteBrief;
-window.deleteNote = deleteNote;
-window.deleteCopy = deleteCopy;
-window.showConfirm = showConfirm;
-window.proceedConfirm = proceedConfirm;
-window.cancelConfirm = cancelConfirm;
-window.toggleArchiveProject = toggleArchiveProject;
-window.handleGlobalTaskDragStart = handleGlobalTaskDragStart;
-window.handleGlobalTaskDragEnd = handleGlobalTaskDragEnd;
-window.handleTaskDragOver = handleTaskDragOver;
-window.handleTaskDragLeave = handleTaskDragLeave;
-window.handleTaskDrop = handleTaskDrop;
-window.toggleGlobalTask = toggleGlobalTask;
-window.openGlobalTaskSource = openGlobalTaskSource;
-window.diveInToGlobalSource = diveInToGlobalSource;
-window.promoteToTopThree = promoteToTopThree;
-window.removeTaskFromTopThree = removeTaskFromTopThree;
-window.navigateToBreadcrumb = navigateToBreadcrumb;
-window.clearBreadcrumbs = clearBreadcrumbs;
-window.dismissResumePanel = dismissResumePanel;
-window.resumeWork = resumeWork;
-window.startPomodoro = startPomodoro;
-window.pausePomodoro = pausePomodoro;
-window.resetPomodoro = resetPomodoro;
-window.skipPomodoro = skipPomodoro;
-window.toggleProjectTask = toggleProjectTask;
-window.diveInToProjectSource = diveInToProjectSource;
-
-// Helper render functions
-window.renderBriefs = renderBriefs;
-window.renderNotes = renderNotes;
-window.renderCopy = renderCopy;
-window.renderProjectTasks = renderProjectTasks;
-window.renderGlobalTasks = renderGlobalTasks;
-
-console.log('Creative Project Manager loaded successfully!');
-console.log('Features:');
-console.log('✓ FIXED: Drag and drop JSON parsing (no more syntax errors!)');
-console.log('✓ Rich text client briefs with document upload (.docx files)');
-console.log('✓ Project export to Word document');
-console.log('✓ Project import from Word document with smart parsing');
-console.log('✓ Global task management system (double-click to open)');
-console.log('✓ Smart breadcrumb trail (screen-width limited)');
-console.log('✓ Brief deletion preserves linked items');
-console.log('✓ Rich text support for notes, copy, and client briefs');
-console.log('✓ Pomodoro timer with focus mode');
-console.log('✓ Context preservation system');
-console.log('✓ Drag and drop between columns to create linked items');
-console.log('✓ Incremental naming for multiple items from same brief');
-console.log('✓ Automatic task name updates when source items are renamed');
-console.log('✓ Smart name updates when moving notes ↔ copy');
-console.log('');
-console.log('DRAG & DROP USAGE:');
-console.log('• Drag briefs → notes/copy to create linked items (auto-numbered)');
-console.log('• Drag notes/copy → tasks to create tasks');
-console.log('• Drag within same column to reorder');
-console.log('• Drag notes ↔ copy to move between columns (name auto-updated)');
-console.log('• Tasks can only be reordered within task column');
-console.log('');
-console.log('SMART FEATURES:');
-console.log('• Multiple notes/copy from same brief: "Brief - note", "Brief - note 2", etc.');
-console.log('• Note → Copy adds "- copy" suffix');
-console.log('• Copy → Note replaces "- copy" with "- note"');
-console.log('• Renaming briefs/notes/copy automatically updates linked task names');
-console.log('');
-console.log('TROUBLESHOOTING:');
-console.log('• If drag & drop stops working: forceDropZoneReset()');
-console.log('• To debug drag & drop issues: debugDragAndDrop()');
-console.log('• To debug title/autosave issues: debugAutosave()');
-console.log('• To test incremental naming: testIncrementalNaming()');
-console.log('• Auto-recovery runs every 30 seconds');
-
-function clearProjectImportZone() {
-    window.pendingProjectImport = null;
-    
-    const importZone = document.querySelector('.project-import-zone');
-    if (importZone) {
-        importZone.style.borderColor = '#d1d5db';
-        importZone.style.background = '#f9fafb';
-        
-        const isLibraryAvailable = mammothLibrary !== null;
-        importZone.innerHTML = `
-            <div style="font-size: 16px; margin-bottom: 8px;">📄 ${isLibraryAvailable ? 'Import Project from Word Document' : 'Document import not available'}</div>
-            <div style="font-size: 13px; opacity: 0.8; margin-bottom: 12px;">${isLibraryAvailable ? 'Drop a .docx file here or click to browse' : 'Document processing library required'}</div>
-            <div style="font-size: 12px; opacity: 0.6;">The document will be analyzed and content will be organized into briefs, notes, and copy automatically</div>
-            ${isLibraryAvailable ? '<input type="file" accept=".docx,.doc" style="display: none;" class="project-import-input">' : ''}
-        `;
-    }
-}
+async function process
